@@ -14,6 +14,7 @@ type I18nContextValue = {
 const I18nContext = createContext<I18nContextValue | null>(null);
 
 const supported: Language[] = ["en", "zh", "es"];
+const dictionaries = messages as Record<Language, Record<string, string>>;
 
 function browserLanguage(): Language {
   if (typeof navigator === "undefined") return "en";
@@ -49,7 +50,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     () => ({
       language,
       setLanguage,
-      t: (key: string) => messages[language]?.[key] ?? messages.en[key] ?? key,
+      t: (key: string) => dictionaries[language]?.[key] ?? dictionaries.en[key] ?? key,
     }),
     [language],
   );
