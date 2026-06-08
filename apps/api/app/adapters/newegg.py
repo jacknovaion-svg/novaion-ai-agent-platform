@@ -16,7 +16,7 @@ class NeweggAdapter(SearchAdapter):
     async def search(self, query: str, options: SearchOptions) -> dict:
         settings = get_settings()
         if not settings.enable_live_scraping:
-            return {"query": query, "html": "", "fallback": True}
+            return {"query": query, "html": "", "live_disabled": True}
 
         url = f"https://www.newegg.com/p/pl?d={query.replace(' ', '+')}"
         async with chromium_browser() as browser:
@@ -28,20 +28,8 @@ class NeweggAdapter(SearchAdapter):
         return {"query": query, "url": url, "html": html, "fallback": False}
 
     def parse_results(self, raw_data: dict) -> list[dict]:
-        if raw_data.get("fallback"):
-            query = raw_data["query"]
-            return [
-                {
-                    "title": f"{query} - Newegg marketplace listing",
-                    "price": "$2,449.99",
-                    "inventory": "Available",
-                    "promotion": "Free shipping",
-                    "url": "https://www.newegg.com/",
-                    "store": "Newegg Online",
-                    "shipping": True,
-                    "pickup": False,
-                }
-            ]
+        if raw_data.get("live_disabled"):
+            return []
 
         soup = BeautifulSoup(raw_data["html"], "html.parser")
         items = []
