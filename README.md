@@ -112,6 +112,8 @@ V1 has no login flow yet. The demo user seeds language preference, saved searche
 
 Full deployment guide: [docs/deployment.md](docs/deployment.md)
 
+Deployment requirements checklist: [docs/deployment-checklist.md](docs/deployment-checklist.md)
+
 Public customer testing architecture:
 
 - Next.js frontend on Vercel
