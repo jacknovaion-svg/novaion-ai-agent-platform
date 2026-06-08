@@ -18,6 +18,8 @@ class BestBuyAdapter(SearchAdapter):
         settings = get_settings()
         if not settings.enable_live_scraping:
             return {"query": query, "html": "", "live_disabled": True}
+        if not settings.enable_bestbuy_scraping:
+            return {"query": query, "html": "", "source_disabled": True}
         if options.mode == SearchMode.LOCAL:
             return {"query": query, "html": "", "mode_unsupported": True}
 
@@ -33,7 +35,7 @@ class BestBuyAdapter(SearchAdapter):
         return {"query": query, "url": url, "html": html, "fallback": False}
 
     def parse_results(self, raw_data: dict) -> list[dict]:
-        if raw_data.get("live_disabled") or raw_data.get("mode_unsupported"):
+        if raw_data.get("live_disabled") or raw_data.get("source_disabled") or raw_data.get("mode_unsupported"):
             return []
 
         soup = BeautifulSoup(raw_data["html"], "html.parser")

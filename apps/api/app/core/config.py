@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     api_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     database_url: str | None = None
     enable_live_scraping: bool = False
+    enable_bestbuy_scraping: bool = False
     adapter_timeout_seconds: int = 60
     playwright_headless: bool = True
     default_user_email: str = "demo@novaion.ai"
