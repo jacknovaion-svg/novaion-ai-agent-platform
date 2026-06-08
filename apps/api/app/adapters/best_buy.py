@@ -39,7 +39,7 @@ class BestBuyAdapter(SearchAdapter):
                     "url": "https://www.bestbuy.com/",
                     "store": "Best Buy Online",
                     "shipping": True,
-                    "pickup": True,
+                    "pickup": False,
                 }
             ]
 
@@ -103,7 +103,7 @@ class BestBuyAdapter(SearchAdapter):
             price=parse_price(parsed_data.get("price")),
             promotion=parsed_data.get("promotion") or None,
             inventory_status=parsed_data.get("inventory"),
-            pickup_available=bool(parsed_data.get("pickup")),
+            pickup_available=bool(parsed_data.get("pickup")) and parsed_data.get("distance") is not None,
             shipping_available=bool(parsed_data.get("shipping")),
             product_url=parsed_data.get("url"),
             updated_at=utc_now(),

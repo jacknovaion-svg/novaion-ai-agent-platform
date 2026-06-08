@@ -4,7 +4,7 @@ import asyncio
 
 from app.adapters import BestBuyAdapter, CDWAdapter, MicroCenterAdapter, NeweggAdapter, ProvantageAdapter
 from app.adapters.base import SearchAdapter
-from app.models.enums import SearchSource
+from app.models.enums import SearchMode, SearchSource
 from app.models.schemas import NormalizedResult, SearchOptions
 
 
@@ -32,4 +32,26 @@ class SearchEngineCenter:
             if isinstance(adapter_results, Exception):
                 continue
             normalized.extend(adapter_results)
-        return normalized
+        return self._apply_search_constraints(normalized, options)
+
+    def _apply_search_constraints(
+        self,
+        results: list[NormalizedResult],
+        options: SearchOptions,
+    ) -> list[NormalizedResult]:
+        return [item for item in results if self._matches_mode_and_radius(item, options)]
+
+    def _matches_mode_and_radius(self, item: NormalizedResult, options: SearchOptions) -> bool:
+        radius = options.radius
+        local_match = (
+            item.pickup_available
+            and item.distance is not None
+            and (radius is None or item.distance <= radius)
+        )
+        online_match = item.shipping_available
+
+        if options.mode == SearchMode.LOCAL:
+            return local_match
+        if options.mode == SearchMode.ONLINE:
+            return online_match
+        return local_match or online_match
