@@ -6,6 +6,7 @@ from app.adapters.base import SearchAdapter
 from app.adapters.browser import chromium_browser
 from app.adapters.utils import infer_brand_and_model, parse_price, utc_now
 from app.core.config import get_settings
+from app.models.enums import SearchMode
 from app.models.schemas import NormalizedResult, SearchOptions
 
 
@@ -17,18 +18,22 @@ class NeweggAdapter(SearchAdapter):
         settings = get_settings()
         if not settings.enable_live_scraping:
             return {"query": query, "html": "", "live_disabled": True}
+        if options.mode == SearchMode.LOCAL:
+            return {"query": query, "html": "", "mode_unsupported": True}
 
         url = f"https://www.newegg.com/p/pl?d={query.replace(' ', '+')}"
         async with chromium_browser() as browser:
             page = await browser.new_page()
-            await page.goto(url, wait_until="domcontentloaded", timeout=45000)
-            await page.wait_for_timeout(2500)
-            html = await page.content()
-            await page.close()
+            try:
+                await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(2500)
+                html = await page.content()
+            finally:
+                await page.close()
         return {"query": query, "url": url, "html": html, "fallback": False}
 
     def parse_results(self, raw_data: dict) -> list[dict]:
-        if raw_data.get("live_disabled"):
+        if raw_data.get("live_disabled") or raw_data.get("mode_unsupported"):
             return []
 
         soup = BeautifulSoup(raw_data["html"], "html.parser")

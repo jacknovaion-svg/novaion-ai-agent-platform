@@ -4,6 +4,7 @@ import asyncio
 
 from app.adapters import BestBuyAdapter, CDWAdapter, MicroCenterAdapter, NeweggAdapter, ProvantageAdapter
 from app.adapters.base import SearchAdapter
+from app.core.config import get_settings
 from app.models.enums import SearchMode, SearchSource
 from app.models.schemas import NormalizedResult, SearchOptions
 
@@ -21,18 +22,29 @@ class SearchEngineCenter:
 
     async def search(self, query: str, options: SearchOptions) -> list[NormalizedResult]:
         selected = [source.value for source in options.sources] or [source.value for source in SearchSource]
-        adapters = [self.adapters[key] for key in selected if key in self.adapters]
-        results = await asyncio.gather(
-            *(adapter.run(query, options) for adapter in adapters),
-            return_exceptions=True,
-        )
+        adapters = self._ordered_adapters(selected)
+        timeout = get_settings().adapter_timeout_seconds
 
         normalized: list[NormalizedResult] = []
-        for adapter_results in results:
-            if isinstance(adapter_results, Exception):
+        for adapter in adapters:
+            try:
+                adapter_results = await asyncio.wait_for(adapter.run(query, options), timeout=timeout)
+            except Exception:
                 continue
             normalized.extend(adapter_results)
         return self._apply_search_constraints(normalized, options)
+
+    def _ordered_adapters(self, selected: list[str]) -> list[SearchAdapter]:
+        priority = {
+            "newegg": 0,
+            "best_buy": 1,
+            "micro_center": 2,
+            "cdw": 3,
+            "provantage": 4,
+        }
+        keys = [key for key in selected if key in self.adapters]
+        keys.sort(key=lambda key: priority.get(key, 99))
+        return [self.adapters[key] for key in keys]
 
     def _apply_search_constraints(
         self,
