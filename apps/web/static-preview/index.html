@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NOVAION AI Agent Platform</title>
+    <style>
+      :root {
+        --bg: #05070d;
+        --panel: #0c1321;
+        --panel-soft: #111b2d;
+        --line: #233149;
+        --text: #eef4ff;
+        --muted: #96a3b8;
+        --blue: #4fa3ff;
+        --gold: #d8ae58;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(79, 163, 255, 0.16), transparent 32rem),
+          linear-gradient(180deg, #07101d 0%, var(--bg) 45%);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .shell { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
+      aside { border-right: 1px solid var(--line); padding: 24px 18px; background: rgba(5, 8, 15, 0.84); }
+      main { min-width: 0; }
+      header { height: 72px; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--line); background: rgba(8, 13, 23, 0.8); }
+      .content { padding: 28px; }
+      .brand { display: grid; gap: 6px; margin-bottom: 28px; }
+      .brand strong { font-size: 18px; }
+      .muted, .brand span { color: var(--muted); font-size: 13px; }
+      .nav, .agents { display: grid; gap: 8px; }
+      .nav a, .agent-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 12px; border-radius: 6px; color: var(--muted); border: 1px solid transparent; }
+      .nav a:first-child, .agent-row { background: var(--panel-soft); color: var(--text); border-color: var(--line); }
+      h1 { margin: 0 0 20px; font-size: 28px; }
+      .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
+      .panel { background: rgba(12, 19, 33, 0.86); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+      .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+      label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; text-transform: uppercase; }
+      input, select {
+        width: 100%; min-height: 42px; border: 1px solid var(--line); border-radius: 6px;
+        background: #07101d; color: var(--text); padding: 0 12px;
+      }
+      .sources { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px; }
+      .check { min-height: 42px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--line); border-radius: 6px; padding: 0 10px; color: var(--text); background: #07101d; text-transform: none; font-size: 14px; }
+      .actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+      button { min-height: 42px; border: 0; border-radius: 6px; padding: 0 14px; cursor: pointer; background: var(--blue); color: #03101f; font-weight: 700; }
+      button.secondary { background: var(--panel-soft); color: var(--text); border: 1px solid var(--line); }
+      .pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; color: var(--muted); font-size: 12px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 18px; min-width: 980px; }
+      th, td { padding: 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; }
+      th { color: var(--muted); background: #0a1020; }
+      .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin-top: 18px; display: none; }
+      .score { color: var(--gold); font-weight: 800; }
+      @media (max-width: 900px) {
+        .shell, .layout, .form-grid { grid-template-columns: 1fr; }
+        aside { border-right: 0; border-bottom: 1px solid var(--line); }
+        .content { padding: 20px 16px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <strong>NOVAION</strong>
+          <span id="appName" data-i18n="appName">NOVAION AI Agent Platform</span>
+        </div>
+        <nav class="nav">
+          <a data-i18n="search">Search</a>
+          <a data-i18n="results">Results</a>
+          <a data-i18n="savedSearches">Saved Searches</a>
+          <a data-i18n="alerts">Alert Center</a>
+        </nav>
+        <p class="muted" style="margin-top: 28px" data-i18n="agentCenter">Agent Center</p>
+        <div class="agents">
+          <div class="agent-row"><span data-i18n="hardwareHunter">Hardware Hunter</span><span class="pill" data-i18n="enabled">Enabled</span></div>
+          <div class="agent-row"><span data-i18n="powerHunter">Power Hunter</span><span class="pill" data-i18n="reserved">Reserved</span></div>
+          <div class="agent-row"><span data-i18n="landHunter">Land Hunter</span><span class="pill" data-i18n="reserved">Reserved</span></div>
+          <div class="agent-row"><span data-i18n="supplierHunter">Supplier Hunter</span><span class="pill" data-i18n="reserved">Reserved</span></div>
+          <div class="agent-row"><span data-i18n="dataCenterHunter">Data Center Hunter</span><span class="pill" data-i18n="reserved">Reserved</span></div>
+        </div>
+      </aside>
+      <main>
+        <header>
+          <div>
+            <strong data-i18n="hardwareHunter">Hardware Hunter</strong>
+            <div class="muted" data-i18n="tagline">AI procurement search agent</div>
+          </div>
+          <select id="language" style="max-width: 150px">
+            <option value="en">English</option>
+            <option value="zh">中文</option>
+          </select>
+        </header>
+        <section class="content">
+          <div class="layout">
+            <div>
+              <h1 data-i18n="hardwareHunter">Hardware Hunter</h1>
+              <section class="panel">
+                <div class="form-grid">
+                  <label><span data-i18n="product">Product</span><input id="query" value="RTX 5090" /></label>
+                  <label><span data-i18n="quantity">Quantity</span><input id="quantity" type="number" value="1" min="1" /></label>
+                  <label><span data-i18n="zipCode">ZIP Code</span><input id="zip" value="94085" /></label>
+                  <label><span data-i18n="radius">Search Radius</span><input id="radius" type="number" value="25" min="1" /></label>
+                  <label><span data-i18n="mode">Search Mode</span>
+                    <select id="mode"><option value="all" data-i18n="all">All</option><option value="local" data-i18n="local">Local Stores</option><option value="online" data-i18n="online">Online Stores</option></select>
+                  </label>
+                </div>
+                <p class="muted" style="margin-top: 18px" data-i18n="sources">Sources</p>
+                <div class="sources">
+                  <label class="check"><input type="checkbox" value="best_buy" checked /> Best Buy</label>
+                  <label class="check"><input type="checkbox" value="micro_center" /> Micro Center</label>
+                  <label class="check"><input type="checkbox" value="newegg" checked /> Newegg</label>
+                  <label class="check"><input type="checkbox" value="cdw" /> CDW</label>
+                  <label class="check"><input type="checkbox" value="provantage" /> Provantage</label>
+                </div>
+                <div class="actions">
+                  <button id="search" data-i18n="startSearch">Start Search</button>
+                  <button class="secondary" id="save" data-i18n="saveSearch">Save Search</button>
+                </div>
+              </section>
+              <div class="table-wrap" id="resultsWrap">
+                <table>
+                  <thead><tr><th data-i18n="rank">Rank</th><th data-i18n="source">Source</th><th data-i18n="productName">Product Name</th><th data-i18n="price">Price</th><th data-i18n="inventory">Inventory</th><th data-i18n="pickup">Pickup</th><th data-i18n="shipping">Shipping</th><th data-i18n="score">Score</th><th data-i18n="link">Link</th></tr></thead>
+                  <tbody id="results"></tbody>
+                </table>
+              </div>
+            </div>
+            <aside class="panel">
+              <p class="muted" data-i18n="v1Scope">V1 Scope</p>
+              <h2 data-i18n="procurementSearch">AI procurement search</h2>
+              <p class="muted" data-i18n="scopeText">Search source adapters, normalize inventory and pricing, then rank by stock, price, distance, and promotion.</p>
+              <div class="agents">
+                <div class="agent-row"><span>Best Buy Adapter</span><span class="pill">Playwright</span></div>
+                <div class="agent-row"><span>Newegg Adapter</span><span class="pill">Playwright</span></div>
+                <div class="agent-row"><span>CDW / Micro Center / Provantage</span><span class="pill" data-i18n="ready">Ready</span></div>
+              </div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      const API = "http://127.0.0.1:8000/api/v1";
+      const messages = {
+        en: {
+          appName: "NOVAION AI Agent Platform",
+          search: "Search",
+          results: "Results",
+          savedSearches: "Saved Searches",
+          alerts: "Alert Center",
+          agentCenter: "Agent Center",
+          hardwareHunter: "Hardware Hunter",
+          powerHunter: "Power Hunter",
+          landHunter: "Land Hunter",
+          supplierHunter: "Supplier Hunter",
+          dataCenterHunter: "Data Center Hunter",
+          enabled: "Enabled",
+          reserved: "Reserved",
+          tagline: "AI procurement search agent",
+          product: "Product",
+          quantity: "Quantity",
+          zipCode: "ZIP Code",
+          radius: "Search Radius",
+          mode: "Search Mode",
+          all: "All",
+          local: "Local Stores",
+          online: "Online Stores",
+          sources: "Sources",
+          startSearch: "Start Search",
+          saveSearch: "Save Search",
+          rank: "Rank",
+          source: "Source",
+          productName: "Product Name",
+          price: "Price",
+          inventory: "Inventory",
+          pickup: "Pickup",
+          shipping: "Shipping",
+          score: "Score",
+          link: "Link",
+          open: "Open",
+          saved: "Saved",
+          v1Scope: "V1 Scope",
+          procurementSearch: "AI procurement search",
+          scopeText: "Search source adapters, normalize inventory and pricing, then rank by stock, price, distance, and promotion.",
+          ready: "Ready",
+        },
+        zh: {
+          appName: "NOVAION AI Agent 平台",
+          search: "搜索",
+          results: "结果",
+          savedSearches: "收藏搜索",
+          alerts: "提醒中心",
+          agentCenter: "Agent 中心",
+          hardwareHunter: "硬件猎手",
+          powerHunter: "电力猎手",
+          landHunter: "土地猎手",
+          supplierHunter: "供应商猎手",
+          dataCenterHunter: "数据中心猎手",
+          enabled: "已启用",
+          reserved: "预留",
+          tagline: "AI 采购搜索 Agent",
+          product: "产品名称",
+          quantity: "数量",
+          zipCode: "邮编",
+          radius: "搜索半径",
+          mode: "搜索模式",
+          all: "全部",
+          local: "本地门店",
+          online: "线上商城",
+          sources: "搜索来源",
+          startSearch: "开始搜索",
+          saveSearch: "保存搜索",
+          rank: "排名",
+          source: "来源",
+          productName: "产品名称",
+          price: "价格",
+          inventory: "库存",
+          pickup: "自提",
+          shipping: "配送",
+          score: "推荐指数",
+          link: "链接",
+          open: "打开",
+          saved: "已保存",
+          v1Scope: "V1 范围",
+          procurementSearch: "AI 采购搜索",
+          scopeText: "通过搜索源 Adapter 汇总库存和价格，并按库存、价格、距离和活动优惠排序。",
+          ready: "就绪",
+        },
+      };
+      let currentLanguage = localStorage.getItem("novaion-preview-language") || (navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en");
+
+      function t(key) {
+        return messages[currentLanguage][key] || messages.en[key] || key;
+      }
+
+      function applyLanguage(language) {
+        currentLanguage = language;
+        localStorage.setItem("novaion-preview-language", language);
+        document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+        document.querySelectorAll("[data-i18n]").forEach((node) => {
+          node.textContent = t(node.dataset.i18n);
+        });
+      }
+
+      function payload() {
+        return {
+          query: document.getElementById("query").value,
+          quantity: Number(document.getElementById("quantity").value),
+          zip_code: document.getElementById("zip").value,
+          radius: Number(document.getElementById("radius").value),
+          mode: document.getElementById("mode").value,
+          sources: Array.from(document.querySelectorAll(".sources input:checked")).map((item) => item.value),
+        };
+      }
+      document.getElementById("search").onclick = async () => {
+        const response = await fetch(`${API}/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload(), agent_type: "hardware_hunter" }),
+        });
+        const job = await response.json();
+        document.getElementById("resultsWrap").style.display = "block";
+        document.getElementById("results").innerHTML = job.results.map((item, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${item.source}</td>
+            <td>${item.product_name}</td>
+            <td>${item.price == null ? "-" : "$" + item.price.toLocaleString()}</td>
+            <td>${item.inventory_status || "-"}</td>
+            <td>${item.pickup_available ? "Y" : "N"}</td>
+            <td>${item.shipping_available ? "Y" : "N"}</td>
+            <td class="score">${item.recommendation_score}</td>
+            <td><a href="${item.product_url || "#"}" target="_blank">${t("open")}</a></td>
+          </tr>
+        `).join("");
+      };
+      document.getElementById("save").onclick = async () => {
+        await fetch(`${API}/saved-searches`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload()),
+        });
+        alert(t("saved"));
+      };
+      document.getElementById("language").onchange = async (event) => {
+        applyLanguage(event.target.value);
+        await fetch(`${API}/users/preferences`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: "demo@novaion.ai", language: event.target.value }),
+        });
+      };
+      document.getElementById("language").value = currentLanguage;
+      applyLanguage(currentLanguage);
+    </script>
+  </body>
+</html>

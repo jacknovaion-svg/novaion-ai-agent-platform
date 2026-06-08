@@ -1,0 +1,14 @@
+.DS_Store
+.env
+.env.local
+.venv
+.pycache/
+__pycache__/
+*.pyc
+node_modules/
+.next/
+dist/
+build/
+coverage/
+playwright-report/
+test-results/

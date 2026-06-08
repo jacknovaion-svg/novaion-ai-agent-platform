@@ -1,0 +1,12 @@
+{
+  "name": "@novaion/shared",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./types": "./types/index.ts",
+    "./i18n/messages": "./i18n/messages.ts"
+  }
+}

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: novaion-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    plan: starter
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_NAME
+        value: NOVAION AI Agent Platform
+      - key: API_CORS_ORIGINS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ENABLE_LIVE_SCRAPING
+        value: false
+      - key: PLAYWRIGHT_HEADLESS
+        value: true
+      - key: DEFAULT_USER_EMAIL
+        value: demo@novaion.ai
