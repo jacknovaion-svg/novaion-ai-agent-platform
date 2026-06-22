@@ -12,6 +12,7 @@ from app.site_hunter.adapters import (
 )
 from app.site_hunter.chinese_requirement_parser import ChineseRequirementParser
 from app.site_hunter.models import (
+    NormalizedSiteListing,
     SearchSourceRun,
     SiteHunterJob,
     SiteHunterJobStatus,
@@ -70,7 +71,7 @@ class SiteHunterJobService:
 
             job.status = SiteHunterJobStatus.SEARCHING_PROPERTIES
             raw_results = []
-            queries = job.generated_queries[:5]
+            queries = self._select_queries(job.generated_queries, max_queries=12)
             for adapter in self.adapters:
                 adapter_query_count = 1 if adapter.adapter_type == "manual_import" else len(queries)
                 source_run = SearchSourceRun(
@@ -108,6 +109,7 @@ class SiteHunterJobService:
             job.status = SiteHunterJobStatus.NORMALIZING_RESULTS
             listings = [self.normalizer.normalize(raw) for raw in raw_results]
             listings = self.normalizer.dedupe(listings)
+            listings = self._apply_known_field_filters(listings, job.parsed_criteria)
 
             job.status = SiteHunterJobStatus.SCORING
             job.results = self.scoring.score(listings)
@@ -128,6 +130,67 @@ class SiteHunterJobService:
 
     def get_site(self, site_id: UUID):
         return site_hunter_store.get_site(site_id)
+
+    def _apply_known_field_filters(self, listings: list[NormalizedSiteListing], criteria) -> list[NormalizedSiteListing]:
+        filtered: list[NormalizedSiteListing] = []
+        for listing in listings:
+            if criteria.max_price_usd and listing.asking_price_usd and listing.asking_price_usd > criteria.max_price_usd:
+                continue
+            if criteria.min_land_acres and listing.land_acres and listing.land_acres < criteria.min_land_acres:
+                continue
+            filtered.append(listing)
+        return filtered
+
+    def _select_queries(self, queries, max_queries: int):
+        selected = []
+        seen: set[str] = set()
+        source_priority = ["economic_development", "industrial_park", "utility", "local_brokerage"]
+        states = []
+        for query in queries:
+            if query.state and query.state not in states:
+                states.append(query.state)
+
+        for state in states or [None]:
+            for query in queries:
+                if query.generated_query_en in seen:
+                    continue
+                if state and query.state != state:
+                    continue
+                if query.source_group == "property_market":
+                    selected.append(query)
+                    seen.add(query.generated_query_en)
+                    break
+            for query in queries:
+                if query.generated_query_en in seen:
+                    continue
+                if state and query.state != state:
+                    continue
+                if query.source_group == "property_market" and "industrial land" in query.generated_query_en.lower():
+                    selected.append(query)
+                    seen.add(query.generated_query_en)
+                    break
+            for source_group in source_priority:
+                for query in queries:
+                    if query.generated_query_en in seen:
+                        continue
+                    if state and query.state != state:
+                        continue
+                    if query.source_group != source_group:
+                        continue
+                    selected.append(query)
+                    seen.add(query.generated_query_en)
+                    if len(selected) >= max_queries:
+                        return selected
+                    break
+
+        for query in queries:
+            if query.generated_query_en in seen:
+                continue
+            selected.append(query)
+            seen.add(query.generated_query_en)
+            if len(selected) >= max_queries:
+                break
+        return selected
 
     def _status_from_exception(self, exc: Exception) -> SourceRunStatus:
         message = str(exc).lower()

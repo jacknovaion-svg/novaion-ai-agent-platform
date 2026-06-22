@@ -74,6 +74,9 @@ export default function SiteHunterProgressPage() {
 
       <div className="panel">
         <div className="section-label">实际执行的英文搜索词</div>
+        <p className="muted">
+          当前本地默认使用公开 DuckDuckGo HTML 搜索发现。Crexi 是 search-backed discovery，不是官方 API。
+        </p>
         <div className="stack-list">
           {(job?.generated_queries ?? []).slice(0, 14).map((query) => (
             <div className="compact-row" key={query.id}>
@@ -89,7 +92,10 @@ export default function SiteHunterProgressPage() {
         <div className="stack-list">
           {(job?.source_runs ?? []).map((run) => (
             <div className="compact-row" key={run.id}>
-              <span>{run.source_name}</span>
+              <span>
+                {run.source_name}
+                {run.error_message ? <small className="danger-text"> · {run.error_message}</small> : null}
+              </span>
               <span className="pill">{run.status} · {run.result_count}</span>
             </div>
           ))}

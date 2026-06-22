@@ -189,3 +189,9 @@ normalize_result(parsed_data)
 ```
 
 Site Hunter does not generate fake property listings. Missing price, acreage, zoning, address, or broker fields are marked as unknown instead of guessed.
+
+For local-only Site Hunter testing, use `LOCAL_TESTING.md`. The intended local URLs are:
+
+- Frontend: `http://localhost:3000/site-hunter`
+- Backend: `http://127.0.0.1:8000`
+- API docs: `http://127.0.0.1:8000/docs`

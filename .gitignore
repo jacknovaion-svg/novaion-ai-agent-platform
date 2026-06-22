@@ -5,7 +5,10 @@
 .pycache/
 __pycache__/
 *.pyc
+*.swp
+*.tsbuildinfo
 node_modules/
+.pnpm-store/
 .next/
 dist/
 build/

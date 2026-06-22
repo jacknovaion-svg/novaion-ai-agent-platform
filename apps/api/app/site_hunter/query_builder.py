@@ -10,7 +10,7 @@ class EnglishSearchQueryBuilder:
 
     def build(self, criteria: SiteHunterStructuredCriteria) -> list[GeneratedSearchQuery]:
         regions = self._region_phrases(criteria)
-        terms = self.expander.expand_property_types(criteria.property_types)
+        terms = self._prioritized_terms(criteria.property_types)
         transaction = criteria.transaction_types[0] if criteria.transaction_types else "for sale"
         area_suffix = f" {criteria.min_land_acres:g}+ acres" if criteria.min_land_acres else ""
         price_suffix = f" under ${criteria.max_price_usd:,.0f}" if criteria.max_price_usd else ""
@@ -18,7 +18,7 @@ class EnglishSearchQueryBuilder:
         queries: list[GeneratedSearchQuery] = []
         for region in regions:
             state, county, city, phrase = region
-            for term in terms[:5]:
+            for term in terms[:8]:
                 queries.append(
                     GeneratedSearchQuery(
                         generated_query_en=f"{term} {transaction} {phrase}{area_suffix}{price_suffix}".strip(),
@@ -69,6 +69,16 @@ class EnglishSearchQueryBuilder:
                 ]
             )
         return self._dedupe(queries)[:40]
+
+    def _prioritized_terms(self, property_types: list[str]) -> list[str]:
+        terms: list[str] = []
+        for property_type in property_types:
+            if property_type not in terms:
+                terms.append(property_type)
+        for term in self.expander.expand_property_types(property_types):
+            if term not in terms:
+                terms.append(term)
+        return terms or ["industrial property", "industrial land"]
 
     def _region_phrases(self, criteria: SiteHunterStructuredCriteria) -> list[tuple[str | None, str | None, str | None, str]]:
         regions = criteria.regions

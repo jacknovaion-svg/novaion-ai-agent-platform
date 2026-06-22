@@ -10,9 +10,18 @@ export default function SiteHunterResultsPage() {
   const params = useParams<{ jobId: string }>();
   const [job, setJob] = useState<SiteHunterJob | null>(null);
   const [stateFilter, setStateFilter] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getSiteHunterJob(params.jobId).then(setJob).catch(() => setJob(null));
+    getSiteHunterJob(params.jobId)
+      .then((next) => {
+        setJob(next);
+        setError(null);
+      })
+      .catch((err) => {
+        setJob(null);
+        setError(err instanceof Error ? err.message : "Failed to load results");
+      });
   }, [params.jobId]);
 
   const results = useMemo(() => {
@@ -26,6 +35,7 @@ export default function SiteHunterResultsPage() {
         <div className="section-label">Site Hunter Results</div>
         <h1 className="page-title">真实工业地产候选</h1>
         <p className="muted">Job {params.jobId} · {job?.status ?? "loading"} · {results.length} results</p>
+        {error ? <p className="danger-text">{error}</p> : null}
         <div className="form-grid" style={{ marginTop: 14 }}>
           <label className="field">
             <span>按州筛选</span>

@@ -8,17 +8,38 @@ import { getSiteHunterSite, reviewSiteHunterSite } from "@/lib/api";
 export default function SiteHunterSiteDetailPage() {
   const params = useParams<{ siteId: string }>();
   const [site, setSite] = useState<SiteListing | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getSiteHunterSite(params.siteId).then(setSite).catch(() => setSite(null));
+    getSiteHunterSite(params.siteId)
+      .then((next) => {
+        setSite(next);
+        setError(null);
+      })
+      .catch((err) => {
+        setSite(null);
+        setError(err instanceof Error ? err.message : "Failed to load site");
+      });
   }, [params.siteId]);
 
   async function review(status: string) {
-    const updated = await reviewSiteHunterSite(params.siteId, status);
-    setSite(updated);
+    try {
+      const updated = await reviewSiteHunterSite(params.siteId, status);
+      setSite(updated);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Review failed");
+    }
   }
 
-  if (!site) return <div className="panel muted">Loading site...</div>;
+  if (!site) {
+    return (
+      <div className="panel muted">
+        Loading site...
+        {error ? <p className="danger-text">{error}</p> : null}
+      </div>
+    );
+  }
 
   return (
     <div className="grid">
@@ -32,6 +53,7 @@ export default function SiteHunterSiteDetailPage() {
           <button className="button secondary" type="button" onClick={() => review("rejected")}>拒绝</button>
           <button className="button secondary" type="button" onClick={() => review("duplicate")}>标记重复</button>
         </div>
+        {error ? <p className="danger-text">{error}</p> : null}
         {site.review_status ? <p className="muted">Review status: {site.review_status}</p> : null}
       </div>
 

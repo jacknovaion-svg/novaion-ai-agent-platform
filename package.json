@@ -6,7 +6,10 @@
     "packages/shared"
   ],
   "scripts": {
-    "dev:web": "npm --workspace apps/web run dev",
+    "dev": "bash scripts/dev-local.sh",
+    "dev:local": "bash scripts/dev-local.sh",
+    "dev:api": "cd apps/api && .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000",
+    "dev:web": "cd apps/web && ./node_modules/.bin/next dev",
     "lint:web": "npm --workspace apps/web run lint",
     "typecheck:web": "npm --workspace apps/web run typecheck"
   }

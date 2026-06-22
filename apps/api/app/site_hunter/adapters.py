@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup
@@ -43,21 +44,38 @@ class WebSearchPropertyAdapter(PropertySourceAdapter):
         ]
 
     def _is_relevant(self, title: str, snippet: str | None, domain: str | None) -> bool:
-        if domain and any(blocked in domain for blocked in ["github.com", "wikipedia.org", "youtube.com", "facebook.com"]):
+        blocked_domains = [
+            "github.com",
+            "wikipedia.org",
+            "youtube.com",
+            "facebook.com",
+            "texags.com",
+            "reddit.com",
+            "x.com",
+            "twitter.com",
+        ]
+        business_only_domains = [
+            "linkbusiness.com",
+            "tworld.com",
+        ]
+        if domain and any(blocked in domain for blocked in blocked_domains + business_only_domains):
             return False
         haystack = f"{title} {snippet or ''}".lower()
+        if "businesses for sale" in haystack and not any(token in haystack for token in ["real estate", "property", "land", "acre"]):
+            return False
         return any(
             token in haystack
             for token in [
                 "industrial",
-                "manufacturing",
                 "warehouse",
                 "factory",
                 "commercial real estate",
                 "land for sale",
                 "property",
                 "available sites",
-                "businesses for sale",
+                "acre",
+                "acres",
+                "shovel-ready",
             ]
         )
 
@@ -106,21 +124,46 @@ class Century21CommercialAdapter(PropertySourceAdapter):
                 response = await client.get(url)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
-                title = self._meta(soup, "title")
-                if not title and soup.title:
-                    title = soup.title.get_text(" ", strip=True)
-                title = title or f"{state} Commercial Real Estate"
-                description = self._meta(soup, "description")
-                results.append(
-                    RawPropertyResult(
-                        source_name=self.source_name,
-                        source_type=self.source_type,
-                        source_url=url,
-                        original_title=title,
-                        original_description=description,
-                        raw_data={"query": query, "state": state, "direct_public_page": True},
+                page_description = self._meta(soup, "description")
+                listings = self._listing_links(soup, url)
+                for listing_title, listing_url, listing_summary in listings:
+                    results.append(
+                        RawPropertyResult(
+                            source_name=self.source_name,
+                            source_type=self.source_type,
+                            source_url=listing_url,
+                            original_title=listing_title,
+                            original_description=listing_summary or page_description,
+                            raw_data={
+                                "query": query,
+                                "state": state,
+                                "direct_public_page": True,
+                                "extraction": "listing_link",
+                            },
+                        )
                     )
-                )
+                    if len(results) >= request.max_results_per_source:
+                        return results
+                if not listings:
+                    title = self._meta(soup, "title")
+                    if not title and soup.title:
+                        title = soup.title.get_text(" ", strip=True)
+                    title = title or f"{state} Commercial Real Estate"
+                    results.append(
+                        RawPropertyResult(
+                            source_name=self.source_name,
+                            source_type=self.source_type,
+                            source_url=url,
+                            original_title=title,
+                            original_description=page_description,
+                            raw_data={
+                                "query": query,
+                                "state": state,
+                                "direct_public_page": True,
+                                "extraction": "state_page_fallback",
+                            },
+                        )
+                    )
         return results[: request.max_results_per_source]
 
     def _state_urls(self, query: str) -> list[tuple[str, str]]:
@@ -144,6 +187,28 @@ class Century21CommercialAdapter(PropertySourceAdapter):
             if node and node.get("content"):
                 return str(node["content"]).strip()
         return None
+
+    def _listing_links(self, soup: BeautifulSoup, base_url: str) -> list[tuple[str, str, str | None]]:
+        listings: list[tuple[str, str, str | None]] = []
+        seen: set[str] = set()
+        for link in soup.select("a[href]"):
+            href = str(link.get("href") or "")
+            title = link.get_text(" ", strip=True)
+            if not href or not title:
+                continue
+            absolute_url = urljoin(base_url, href)
+            lowered = absolute_url.lower()
+            if "commercial.century21.com" not in lowered:
+                continue
+            if not any(token in lowered for token in ["/property/", "/commercial-property/", "/listing/"]):
+                continue
+            if absolute_url in seen:
+                continue
+            seen.add(absolute_url)
+            container = link.find_parent(["article", "li", "div"])
+            summary = container.get_text(" ", strip=True)[:500] if container else None
+            listings.append((title, absolute_url, summary))
+        return listings
 
 
 class ManualImportAdapter(PropertySourceAdapter):
