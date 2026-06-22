@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
 
@@ -125,7 +126,7 @@ class Century21CommercialAdapter(PropertySourceAdapter):
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, "html.parser")
                 page_description = self._meta(soup, "description")
-                listings = self._listing_links(soup, url)
+                listings = self._prioritize_listings(self._listing_links(soup, url))
                 for listing_title, listing_url, listing_summary in listings:
                     results.append(
                         RawPropertyResult(
@@ -142,7 +143,7 @@ class Century21CommercialAdapter(PropertySourceAdapter):
                             },
                         )
                     )
-                    if len(results) >= request.max_results_per_source:
+                    if len(results) >= max(request.max_results_per_source, 12):
                         return results
                 if not listings:
                     title = self._meta(soup, "title")
@@ -164,7 +165,7 @@ class Century21CommercialAdapter(PropertySourceAdapter):
                             },
                         )
                     )
-        return results[: request.max_results_per_source]
+        return results[: max(request.max_results_per_source, 12)]
 
     def _state_urls(self, query: str) -> list[tuple[str, str]]:
         mapping = {
@@ -209,6 +210,27 @@ class Century21CommercialAdapter(PropertySourceAdapter):
             summary = container.get_text(" ", strip=True)[:500] if container else None
             listings.append((title, absolute_url, summary))
         return listings
+
+    def _prioritize_listings(self, listings: list[tuple[str, str, str | None]]) -> list[tuple[str, str, str | None]]:
+        return sorted(listings, key=self._listing_sort_key)
+
+    def _listing_sort_key(self, listing: tuple[str, str, str | None]) -> tuple[int, float, float]:
+        title, _, summary = listing
+        text = f"{title} {summary or ''}"
+        price = self._price(text)
+        acres = self._acres(text)
+        over_budget = 1 if price and price > 10_000_000 else 0
+        price_sort = price if price is not None else 10_000_000
+        acres_sort = -acres if acres is not None else 0
+        return over_budget, price_sort, acres_sort
+
+    def _price(self, text: str) -> float | None:
+        match = re.search(r"\$\s*(\d+(?:,\d{3})+(?:\.\d+)?)", text)
+        return float(match.group(1).replace(",", "")) if match else None
+
+    def _acres(self, text: str) -> float | None:
+        match = re.search(r"(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:\+|-)?\s*ac(?:res?)?\b", text, re.IGNORECASE)
+        return float(match.group(1).replace(",", "")) if match else None
 
 
 class ManualImportAdapter(PropertySourceAdapter):

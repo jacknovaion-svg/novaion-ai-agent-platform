@@ -12,7 +12,6 @@ from app.site_hunter.adapters import (
 )
 from app.site_hunter.chinese_requirement_parser import ChineseRequirementParser
 from app.site_hunter.models import (
-    NormalizedSiteListing,
     SearchSourceRun,
     SiteHunterJob,
     SiteHunterJobStatus,
@@ -22,6 +21,7 @@ from app.site_hunter.models import (
     utc_now,
 )
 from app.site_hunter.normalizer import PropertyNormalizer
+from app.site_hunter.quality import ResultQualityService
 from app.site_hunter.query_builder import EnglishSearchQueryBuilder
 from app.site_hunter.scoring import SiteOpportunityScoringService
 from app.site_hunter.source_discovery import SourceDiscoveryService
@@ -34,6 +34,7 @@ class SiteHunterJobService:
         self.query_builder = EnglishSearchQueryBuilder()
         self.source_discovery = SourceDiscoveryService()
         self.normalizer = PropertyNormalizer()
+        self.quality = ResultQualityService()
         self.scoring = SiteOpportunityScoringService()
         self.adapters: list[PropertySourceAdapter] = [
             WebSearchPropertyAdapter(),
@@ -108,11 +109,12 @@ class SiteHunterJobService:
 
             job.status = SiteHunterJobStatus.NORMALIZING_RESULTS
             listings = [self.normalizer.normalize(raw) for raw in raw_results]
-            listings = self.normalizer.dedupe(listings)
-            listings = self._apply_known_field_filters(listings, job.parsed_criteria)
+            final_candidates, discovery_candidates, quality_stats = self.quality.process(listings, job.parsed_criteria)
+            job.discovery_candidates = discovery_candidates
+            job.quality_stats = quality_stats
 
             job.status = SiteHunterJobStatus.SCORING
-            job.results = self.scoring.score(listings)
+            job.results = self.scoring.score(final_candidates)
             job.status = SiteHunterJobStatus.COMPLETED if job.results else SiteHunterJobStatus.PARTIALLY_COMPLETED
             job.completed_at = utc_now()
             site_hunter_store.update_job(job)
@@ -130,16 +132,6 @@ class SiteHunterJobService:
 
     def get_site(self, site_id: UUID):
         return site_hunter_store.get_site(site_id)
-
-    def _apply_known_field_filters(self, listings: list[NormalizedSiteListing], criteria) -> list[NormalizedSiteListing]:
-        filtered: list[NormalizedSiteListing] = []
-        for listing in listings:
-            if criteria.max_price_usd and listing.asking_price_usd and listing.asking_price_usd > criteria.max_price_usd:
-                continue
-            if criteria.min_land_acres and listing.land_acres and listing.land_acres < criteria.min_land_acres:
-                continue
-            filtered.append(listing)
-        return filtered
 
     def _select_queries(self, queries, max_queries: int):
         selected = []

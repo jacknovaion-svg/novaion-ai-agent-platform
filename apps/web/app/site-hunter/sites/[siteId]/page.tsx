@@ -47,6 +47,13 @@ export default function SiteHunterSiteDetailPage() {
         <div className="section-label">Site Detail</div>
         <h1 className="page-title">{site.translated_title_zh ?? site.site_name}</h1>
         <p className="muted">{site.original_title}</p>
+        <div className="site-facts" style={{ marginTop: 12 }}>
+          <span>Category: {site.result_category}</span>
+          <span>Completeness: {Math.round(site.data_completeness_score * 100)}%</span>
+          <span>Address status: {site.address_status}</span>
+          <span>Price status: {site.price_status}</span>
+          <span>Source confidence: {site.source_confidence}</span>
+        </div>
         <div className="actions">
           <button className="button primary" type="button" onClick={() => review("investigate")}>加入进一步调查</button>
           <button className="button secondary" type="button" onClick={() => review("kept")}>保留</button>
@@ -68,6 +75,7 @@ export default function SiteHunterSiteDetailPage() {
           <span>Acres: {site.land_acres ?? "unknown"}</span>
           <span>Building sqft: {site.building_sqft ?? "unknown"}</span>
           <span>Price: {site.asking_price_usd ? `$${site.asking_price_usd.toLocaleString()}` : "unknown"}</span>
+          <span>Broker/source: {site.broker_company ?? site.source_name}</span>
           <span>Zoning: {site.zoning ?? "unknown"}</span>
         </div>
       </section>
@@ -88,6 +96,7 @@ export default function SiteHunterSiteDetailPage() {
         </ul>
         <div className="section-label">风险和未知信息</div>
         <ul>
+          {site.quality_flags.map((flag) => <li key={flag}>{flag}</li>)}
           {site.warnings.map((warning) => <li key={warning}>{warning}</li>)}
           {site.missing_fields.map((field) => <li key={field}>{field}: unknown</li>)}
         </ul>

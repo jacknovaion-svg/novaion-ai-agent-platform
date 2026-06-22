@@ -65,6 +65,38 @@ class SiteReviewStatus(str, Enum):
     INCORRECT = "incorrect"
 
 
+class ResultCategory(str, Enum):
+    SPECIFIC_LISTING = "specific_listing"
+    LISTING_COLLECTION = "listing_collection"
+    SOURCE_PAGE = "source_page"
+    IRRELEVANT = "irrelevant"
+
+
+class AddressStatus(str, Enum):
+    FULL = "full"
+    PARTIAL = "partial"
+    UNKNOWN = "unknown"
+
+
+class PriceStatus(str, Enum):
+    ASKING_PRICE = "asking_price"
+    CONTACT_FOR_PRICE = "contact_for_price"
+    UNKNOWN = "unknown"
+
+
+class ResultQualityStats(BaseModel):
+    raw_results: int = 0
+    specific_listings: int = 0
+    listing_collections: int = 0
+    source_pages: int = 0
+    irrelevant_results: int = 0
+    duplicates_removed: int = 0
+    state_mismatch_removed: int = 0
+    size_mismatch_removed: int = 0
+    budget_mismatch_removed: int = 0
+    final_candidates: int = 0
+
+
 class SiteHunterRegions(BaseModel):
     states: list[str] = Field(default_factory=list)
     counties: list[str] = Field(default_factory=list)
@@ -181,6 +213,11 @@ class NormalizedSiteListing(BaseModel):
     original_description: str | None = None
     broker_name: str | None = None
     broker_company: str | None = None
+    result_category: ResultCategory = ResultCategory.IRRELEVANT
+    address_status: AddressStatus = AddressStatus.UNKNOWN
+    price_status: PriceStatus = PriceStatus.UNKNOWN
+    data_completeness_score: float = 0
+    quality_flags: list[str] = Field(default_factory=list)
     source_confidence: TrustLevel = TrustLevel.UNVERIFIED
     field_confidence: dict[str, TrustLevel] = Field(default_factory=dict)
     missing_fields: list[str] = Field(default_factory=list)
@@ -203,6 +240,8 @@ class SiteHunterJob(BaseModel):
     discovered_sources: list[DiscoveredSource] = Field(default_factory=list)
     source_runs: list[SearchSourceRun] = Field(default_factory=list)
     results: list[NormalizedSiteListing] = Field(default_factory=list)
+    discovery_candidates: list[NormalizedSiteListing] = Field(default_factory=list)
+    quality_stats: ResultQualityStats = Field(default_factory=ResultQualityStats)
     error_message: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

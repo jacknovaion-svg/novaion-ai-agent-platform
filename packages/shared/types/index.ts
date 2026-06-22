@@ -53,6 +53,20 @@ export type SiteHunterJobStatus =
   | "failed";
 
 export type SiteSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
+export type SiteResultCategory = "specific_listing" | "listing_collection" | "source_page" | "irrelevant";
+
+export interface ResultQualityStats {
+  raw_results: number;
+  specific_listings: number;
+  listing_collections: number;
+  source_pages: number;
+  irrelevant_results: number;
+  duplicates_removed: number;
+  state_mismatch_removed: number;
+  size_mismatch_removed: number;
+  budget_mismatch_removed: number;
+  final_candidates: number;
+}
 
 export interface SiteHunterRegions {
   states: string[];
@@ -152,6 +166,11 @@ export interface SiteListing {
   original_description?: string | null;
   broker_name?: string | null;
   broker_company?: string | null;
+  result_category: SiteResultCategory;
+  address_status: string;
+  price_status: string;
+  data_completeness_score: number;
+  quality_flags: string[];
   source_confidence: string;
   field_confidence: Record<string, string>;
   missing_fields: string[];
@@ -174,6 +193,8 @@ export interface SiteHunterJob {
   discovered_sources: DiscoveredSource[];
   source_runs: SiteSourceRun[];
   results: SiteListing[];
+  discovery_candidates: SiteListing[];
+  quality_stats: ResultQualityStats;
   error_message?: string | null;
   created_at: string;
   updated_at: string;

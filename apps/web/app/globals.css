@@ -333,6 +333,10 @@ th {
   color: var(--gold);
 }
 
+.quality-metrics {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
 .stack-list {
   display: grid;
   gap: 8px;
@@ -353,6 +357,14 @@ th {
 .compact-row span:first-child {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.source-row {
+  align-items: flex-start;
+}
+
+.source-row .button {
+  flex: 0 0 auto;
 }
 
 .site-card-grid {

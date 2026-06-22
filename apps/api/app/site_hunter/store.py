@@ -17,7 +17,7 @@ class SiteHunterMemoryStore:
     def update_job(self, job: SiteHunterJob) -> SiteHunterJob:
         job.updated_at = utc_now()
         self.jobs[job.id] = job
-        for result in job.results:
+        for result in [*job.results, *job.discovery_candidates]:
             self.sites[result.id] = result
         return job
 

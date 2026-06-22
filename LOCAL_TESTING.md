@@ -77,8 +77,11 @@ Expected result behavior:
 - Source run status is shown per adapter.
 - `Public Web Search`, `Manual Import`, and `Century 21 Commercial` run independently.
 - `Crexi` may return zero results and is labeled as search-engine-backed discovery.
+- Formal results contain only `specific_listing` records.
+- `listing_collection` and `source_page` records are shown in the follow-up discovery list, not as formal property candidates.
 - At least one real candidate should include an original English title, original link, source name, Chinese summary, and unknown markers for missing fields.
 - Missing address, acreage, building size, price, or zoning fields must display as `unknown`.
+- Result quality stats include raw results, categories, duplicate removals, filter removals, and final candidate count.
 
 ## API Smoke Test
 

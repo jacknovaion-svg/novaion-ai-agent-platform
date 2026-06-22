@@ -160,6 +160,8 @@ Implemented:
 - `Century21CommercialAdapter`
 - `CrexiSearchAdapter` as best-effort search-backed commercial source discovery
 - Property normalization, basic dedupe, missing-field labeling, source confidence, and Chinese summaries
+- Result quality classification: `specific_listing`, `listing_collection`, `source_page`, and `irrelevant`
+- Result quality stats and filtering for state, known acreage, known budget, irrelevant pages, and duplicates
 - Site Hunter frontend pages: search, progress, results, and detail/review
 - Supabase schema for discovered sources, site listings, source documents, coordinates, and reserved power-assessment tables
 
