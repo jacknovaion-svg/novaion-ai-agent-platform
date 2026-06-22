@@ -39,3 +39,143 @@ export interface SearchJob {
   created_at: string;
   results: SearchResult[];
 }
+
+export type SiteHunterJobStatus =
+  | "created"
+  | "parsing_requirements"
+  | "generating_queries"
+  | "discovering_sources"
+  | "searching_properties"
+  | "normalizing_results"
+  | "scoring"
+  | "completed"
+  | "partially_completed"
+  | "failed";
+
+export type SiteSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
+
+export interface SiteHunterRegions {
+  states: string[];
+  counties: string[];
+  cities: string[];
+  zip_codes: string[];
+  custom_area?: string | null;
+  radius_miles?: number | null;
+}
+
+export interface SiteHunterStructuredCriteria {
+  regions: SiteHunterRegions;
+  property_types: string[];
+  transaction_types: string[];
+  min_land_acres?: number | null;
+  max_land_acres?: number | null;
+  min_building_sqft?: number | null;
+  max_building_sqft?: number | null;
+  max_price_usd?: number | null;
+  target_load_mw?: number | null;
+  preferred_substation_distance_miles?: number | null;
+  preferred_transmission_voltage_kv?: number | null;
+  project_use?: string | null;
+  raw_user_query_zh?: string | null;
+  parsed_summary_zh?: string | null;
+}
+
+export interface GeneratedSearchQuery {
+  id: string;
+  generated_query_en: string;
+  source_group: string;
+  state?: string | null;
+  county?: string | null;
+  city?: string | null;
+  property_type?: string | null;
+  status: SiteSourceRunStatus;
+  result_count: number;
+  created_at: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface DiscoveredSource {
+  id: string;
+  source_name: string;
+  domain: string;
+  source_type: string;
+  state?: string | null;
+  county?: string | null;
+  city?: string | null;
+  discovery_method: string;
+  trust_level: string;
+  adapter_type: string;
+  status: SiteSourceRunStatus;
+  last_success_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SiteSourceRun {
+  id: string;
+  source_name: string;
+  source_type: string;
+  adapter_type: string;
+  query?: string | null;
+  status: SiteSourceRunStatus;
+  result_count: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface SiteListing {
+  id: string;
+  site_name: string;
+  translated_title_zh?: string | null;
+  translated_summary_zh?: string | null;
+  address_line_1?: string | null;
+  city?: string | null;
+  county?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  country: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  property_type?: string | null;
+  zoning?: string | null;
+  land_acres?: number | null;
+  building_sqft?: number | null;
+  asking_price_usd?: number | null;
+  transaction_type?: string | null;
+  source_name: string;
+  source_url: string;
+  source_type: string;
+  original_title: string;
+  original_description?: string | null;
+  broker_name?: string | null;
+  broker_company?: string | null;
+  source_confidence: string;
+  field_confidence: Record<string, string>;
+  missing_fields: string[];
+  raw_data_json: Record<string, unknown>;
+  first_seen_at: string;
+  last_checked_at: string;
+  preliminary_score: number;
+  preliminary_grade: string;
+  score_reasons: string[];
+  warnings: string[];
+  review_status?: string | null;
+}
+
+export interface SiteHunterJob {
+  id: string;
+  status: SiteHunterJobStatus;
+  natural_language_query_zh?: string | null;
+  parsed_criteria?: SiteHunterStructuredCriteria | null;
+  generated_queries: GeneratedSearchQuery[];
+  discovered_sources: DiscoveredSource[];
+  source_runs: SiteSourceRun[];
+  results: SiteListing[];
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}

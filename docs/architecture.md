@@ -2,9 +2,10 @@
 
 ## Platform Shape
 
-NOVAION is an agent platform, not a single-purpose hardware finder. V1 ships one enabled agent:
+NOVAION is an agent platform, not a single-purpose hardware finder. V1 ships enabled agents:
 
 - `hardware_hunter`
+- `site_hunter`
 
 Reserved agent types:
 
@@ -25,6 +26,43 @@ Routers
       -> Recommendation service
   -> Database repository
 ```
+
+## Site Hunter Shape
+
+Site Hunter is implemented as a task-based agent because real estate discovery can take longer than a normal request-response search.
+
+```text
+Site Hunter Search Request
+  -> ChineseRequirementParser
+  -> IndustryTermExpander
+  -> EnglishSearchQueryBuilder
+  -> SourceDiscoveryService
+  -> PropertySourceAdapters
+      -> WebSearchPropertyAdapter
+      -> CrexiSearchAdapter
+      -> Century21CommercialAdapter
+      -> ManualImportAdapter
+  -> PropertyNormalizer
+  -> SiteOpportunityScoringService
+  -> Site Hunter results/detail pages
+```
+
+The first phase supports all U.S. states and Washington, D.C. at the query and source-discovery layer. It does not claim complete coverage of every county, city, broker, or property website.
+
+## Site Hunter Data Integrity
+
+Site Hunter must retain:
+
+- Original Chinese input
+- Parsed structured criteria
+- Generated English search terms
+- Source run status and errors
+- Original English title
+- Original description/snippet when available
+- Original source URL
+- Fetch/check timestamp
+
+Missing fields are stored as unknown. Public seller, broker, or utility claims are source-confirmed or unverified; they are not treated as utility-verified capacity.
 
 ## Adapter Contract
 

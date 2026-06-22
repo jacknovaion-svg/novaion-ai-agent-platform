@@ -5,6 +5,7 @@ Unified AI search, procurement, and resource discovery platform.
 V1 launches with **Hardware Hunter**, an agent for discovering computer hardware inventory and pricing across online and local sources. The architecture is intentionally generic so future agents can be added without rewriting the platform:
 
 - Hardware Hunter
+- Site Hunter
 - Power Hunter
 - Land Hunter
 - Supplier Hunter
@@ -128,6 +129,7 @@ Implemented foundation:
 
 - Generic Agent Center
 - Hardware Hunter agent
+- Site Hunter agent
 - Adapter-based Search Engine Center
 - Best Buy and Newegg Playwright-ready adapters
 - CDW, Micro Center, and Provantage placeholder adapters
@@ -140,9 +142,45 @@ Implemented foundation:
 - English and Chinese i18n, with Spanish reserved
 - User language preference API
 
+## Site Hunter V1 Phase 1
+
+Site Hunter is implemented as an independent enabled agent. It does not modify Hardware Hunter core search logic.
+
+Implemented:
+
+- Chinese natural-language requirement intake
+- Structured site-search criteria for state, county, city, ZIP, acreage, budget, target MW, and project use
+- Rule-based Chinese requirement parser with audit fields
+- U.S. industrial real-estate English term expansion
+- Multi-query English search generation
+- `SourceDiscoveryService` for national, local brokerage, economic-development, industrial-park, and utility source discovery
+- Background search-job API with per-source run status
+- `WebSearchPropertyAdapter`
+- `ManualImportAdapter`
+- `Century21CommercialAdapter`
+- `CrexiSearchAdapter` as best-effort search-backed commercial source discovery
+- Property normalization, basic dedupe, missing-field labeling, source confidence, and Chinese summaries
+- Site Hunter frontend pages: search, progress, results, and detail/review
+- Supabase schema for discovered sources, site listings, source documents, coordinates, and reserved power-assessment tables
+
+Real data status:
+
+- Public Web Search: real public result pages and original links
+- Century 21 Commercial: real public commercial real-estate state pages
+- Crexi: adapter present, search-engine-backed, may return zero results depending on search availability
+- Manual Import: real user-provided URLs/text only
+
+Not implemented in this phase:
+
+- Utility capacity verification
+- Available MW determination
+- Complex grid GIS
+- Automated broker or utility outreach
+- Email sending or CRM workflows
+
 ## Notes
 
-The search adapter layer is designed so Playwright scraping can be swapped for official APIs later. Each source implements:
+The search adapter layer is designed so Playwright scraping or public web search can be swapped for official APIs later. Hardware sources implement:
 
 ```python
 search(query, options)
@@ -150,4 +188,4 @@ parse_results(raw_data)
 normalize_result(parsed_data)
 ```
 
-V1 uses resilient page extraction and sample fallback data when live scraping is blocked or not configured. This keeps the product usable during early development while preserving the real adapter contract.
+Site Hunter does not generate fake property listings. Missing price, acreage, zoning, address, or broker fields are marked as unknown instead of guessed.

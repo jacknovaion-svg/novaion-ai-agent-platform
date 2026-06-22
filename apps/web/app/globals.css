@@ -289,6 +289,125 @@ th {
   border-bottom: 1px solid var(--line);
 }
 
+.textarea {
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #07101d;
+  color: var(--text);
+  padding: 12px;
+  line-height: 1.55;
+}
+
+.site-layout {
+  grid-template-columns: minmax(0, 1fr) 340px;
+  align-items: start;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.metric {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #07101d;
+}
+
+.metric span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  font-size: 22px;
+  color: var(--gold);
+}
+
+.stack-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.compact-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: #07101d;
+}
+
+.compact-row span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.site-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.site-card {
+  display: grid;
+  gap: 12px;
+}
+
+.site-card h2 {
+  margin: 8px 0 0;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.site-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.score-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgba(216, 174, 88, 0.5);
+  border-radius: 999px;
+  color: var(--gold);
+  padding: 6px 10px;
+  font-weight: 700;
+}
+
+.site-facts,
+.fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+}
+
+.site-facts span,
+.fact-grid span {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: #07101d;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
@@ -300,9 +419,14 @@ th {
   }
 
   .search-layout,
+  .site-layout,
   .detail-grid,
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .topbar {

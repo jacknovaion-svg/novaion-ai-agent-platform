@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routers import agents, saved_searches, search, users
+from app.routers import agents, saved_searches, search, site_hunter, users
 
 settings = get_settings()
 
@@ -18,6 +18,7 @@ app.add_middleware(
 
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(search.router, prefix="/api/v1")
+app.include_router(site_hunter.router, prefix="/api/v1")
 app.include_router(saved_searches.router, prefix="/api/v1")
 app.include_router(users.router, prefix="/api/v1")
 

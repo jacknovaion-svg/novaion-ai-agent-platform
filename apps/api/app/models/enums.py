@@ -3,6 +3,7 @@ from enum import Enum
 
 class AgentType(str, Enum):
     HARDWARE_HUNTER = "hardware_hunter"
+    SITE_HUNTER = "site_hunter"
     POWER_HUNTER = "power_hunter"
     LAND_HUNTER = "land_hunter"
     SUPPLIER_HUNTER = "supplier_hunter"

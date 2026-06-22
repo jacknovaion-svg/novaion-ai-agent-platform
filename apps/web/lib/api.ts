@@ -1,4 +1,4 @@
-import type { SearchJob, SearchMode, SearchResult, SearchSource } from "@novaion/shared/types";
+import type { SearchJob, SearchMode, SearchResult, SearchSource, SiteHunterJob, SiteListing } from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 
@@ -53,4 +53,67 @@ export function storeDetail(result: SearchResult) {
 export function loadDetail(): SearchResult | null {
   const raw = window.sessionStorage.getItem("novaion-selected-result");
   return raw ? (JSON.parse(raw) as SearchResult) : null;
+}
+
+export type SiteHunterPayload = {
+  natural_language_query_zh?: string;
+  structured_criteria?: {
+    regions: {
+      states: string[];
+      counties: string[];
+      cities: string[];
+      zip_codes: string[];
+      custom_area?: string | null;
+      radius_miles?: number | null;
+    };
+    property_types: string[];
+    transaction_types: string[];
+    min_land_acres?: number | null;
+    max_price_usd?: number | null;
+    target_load_mw?: number | null;
+    preferred_substation_distance_miles?: number | null;
+    preferred_transmission_voltage_kv?: number | null;
+    project_use?: string | null;
+  };
+  manual_urls?: string[];
+  manual_text?: string | null;
+  max_results_per_source?: number;
+};
+
+export async function createSiteHunterJob(payload: SiteHunterPayload): Promise<SiteHunterJob> {
+  const response = await fetch(`${API_BASE}/site-hunter/search-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Site Hunter search failed");
+  return response.json();
+}
+
+export async function getSiteHunterJob(jobId: string): Promise<SiteHunterJob> {
+  const response = await fetch(`${API_BASE}/site-hunter/search-jobs/${jobId}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Site Hunter job not found");
+  return response.json();
+}
+
+export async function getSiteHunterResults(jobId: string): Promise<SiteListing[]> {
+  const response = await fetch(`${API_BASE}/site-hunter/search-jobs/${jobId}/results`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Site Hunter results not found");
+  return response.json();
+}
+
+export async function getSiteHunterSite(siteId: string): Promise<SiteListing> {
+  const response = await fetch(`${API_BASE}/site-hunter/sites/${siteId}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Site not found");
+  return response.json();
+}
+
+export async function reviewSiteHunterSite(siteId: string, status: string) {
+  const response = await fetch(`${API_BASE}/site-hunter/sites/${siteId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  if (!response.ok) throw new Error("Site review failed");
+  return response.json();
 }

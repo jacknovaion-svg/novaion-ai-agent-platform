@@ -1,5 +1,6 @@
 insert into agents (name, type, enabled) values
   ('Hardware Hunter', 'hardware_hunter', true),
+  ('Site Hunter', 'site_hunter', true),
   ('Power Hunter', 'power_hunter', false),
   ('Land Hunter', 'land_hunter', false),
   ('Supplier Hunter', 'supplier_hunter', false),

@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bookmark, Cpu, Database, Factory, LandPlot, Search, Zap } from "lucide-react";
+import { Bell, Bookmark, Building2, Cpu, Database, Factory, LandPlot, Search, Zap } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -9,6 +9,7 @@ import type { Language } from "@novaion/shared/types";
 
 const nav = [
   { href: "/", label: "search", icon: Search },
+  { href: "/site-hunter", label: "siteHunter", icon: Building2 },
   { href: "/results", label: "results", icon: Database },
   { href: "/saved-searches", label: "savedSearches", icon: Bookmark },
   { href: "/alerts", label: "alerts", icon: Bell },
@@ -16,6 +17,7 @@ const nav = [
 
 const agents = [
   { label: "hardwareHunter", icon: Cpu, active: true },
+  { label: "siteHunter", icon: Building2, active: true },
   { label: "powerHunter", icon: Zap, active: false },
   { label: "landHunter", icon: LandPlot, active: false },
   { label: "supplierHunter", icon: Factory, active: false },
@@ -65,8 +67,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="main">
         <header className="topbar">
           <div>
-            <strong>{t("hardwareHunter")}</strong>
-            <div className="muted">AI procurement search agent</div>
+            <strong>{path.startsWith("/site-hunter") ? t("siteHunter") : t("hardwareHunter")}</strong>
+            <div className="muted">
+              {path.startsWith("/site-hunter") ? "Industrial site discovery agent" : "AI procurement search agent"}
+            </div>
           </div>
           <label className="field" style={{ minWidth: 150 }}>
             <span>{t("language")}</span>

@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+import asyncio
+from uuid import UUID
+
+from app.site_hunter.adapters import (
+    Century21CommercialAdapter,
+    CrexiSearchAdapter,
+    ManualImportAdapter,
+    PropertySourceAdapter,
+    WebSearchPropertyAdapter,
+)
+from app.site_hunter.chinese_requirement_parser import ChineseRequirementParser
+from app.site_hunter.models import (
+    SearchSourceRun,
+    SiteHunterJob,
+    SiteHunterJobStatus,
+    SiteHunterSearchRequest,
+    SourceRunStatus,
+    SourceType,
+    utc_now,
+)
+from app.site_hunter.normalizer import PropertyNormalizer
+from app.site_hunter.query_builder import EnglishSearchQueryBuilder
+from app.site_hunter.scoring import SiteOpportunityScoringService
+from app.site_hunter.source_discovery import SourceDiscoveryService
+from app.site_hunter.store import site_hunter_store
+
+
+class SiteHunterJobService:
+    def __init__(self) -> None:
+        self.parser = ChineseRequirementParser()
+        self.query_builder = EnglishSearchQueryBuilder()
+        self.source_discovery = SourceDiscoveryService()
+        self.normalizer = PropertyNormalizer()
+        self.scoring = SiteOpportunityScoringService()
+        self.adapters: list[PropertySourceAdapter] = [
+            WebSearchPropertyAdapter(),
+            CrexiSearchAdapter(),
+            Century21CommercialAdapter(),
+            ManualImportAdapter(),
+        ]
+
+    def create_job(self, request: SiteHunterSearchRequest) -> SiteHunterJob:
+        job = SiteHunterJob(
+            natural_language_query_zh=request.natural_language_query_zh,
+            status=SiteHunterJobStatus.CREATED,
+        )
+        site_hunter_store.create_job(job)
+        return job
+
+    async def run_job(self, job_id: UUID, request: SiteHunterSearchRequest) -> None:
+        job = site_hunter_store.get_job(job_id)
+        if not job:
+            return
+        try:
+            job.status = SiteHunterJobStatus.PARSING_REQUIREMENTS
+            site_hunter_store.update_job(job)
+
+            parsed = self.parser.parse(request.natural_language_query_zh or "", request.structured_criteria)
+            job.parsed_criteria = parsed
+
+            job.status = SiteHunterJobStatus.GENERATING_QUERIES
+            job.generated_queries = self.query_builder.build(parsed)
+            site_hunter_store.update_job(job)
+
+            job.status = SiteHunterJobStatus.DISCOVERING_SOURCES
+            job.discovered_sources = await self.source_discovery.discover(job.generated_queries)
+            site_hunter_store.update_job(job)
+
+            job.status = SiteHunterJobStatus.SEARCHING_PROPERTIES
+            raw_results = []
+            queries = job.generated_queries[:5]
+            for adapter in self.adapters:
+                adapter_query_count = 1 if adapter.adapter_type == "manual_import" else len(queries)
+                source_run = SearchSourceRun(
+                    source_name=adapter.source_name,
+                    source_type=adapter.source_type,
+                    adapter_type=adapter.adapter_type,
+                    status=SourceRunStatus.SEARCHING,
+                    started_at=utc_now(),
+                )
+                job.source_runs.append(source_run)
+                site_hunter_store.update_job(job)
+                try:
+                    adapter_results = []
+                    if adapter.adapter_type == "manual_import":
+                        adapter_results.extend(await asyncio.wait_for(adapter.search("manual import", request), timeout=20))
+                    else:
+                        for query in queries:
+                            adapter_results.extend(await asyncio.wait_for(adapter.search(query.generated_query_en, request), timeout=30))
+                    raw_results.extend(adapter_results)
+                    source_run.status = SourceRunStatus.SUCCESS
+                    source_run.result_count = len(adapter_results)
+                    source_run.completed_at = utc_now()
+                except asyncio.TimeoutError:
+                    source_run.status = SourceRunStatus.TIMEOUT
+                    source_run.error_message = "Source timed out without blocking the whole job."
+                    source_run.completed_at = utc_now()
+                except Exception as exc:
+                    source_run.status = self._status_from_exception(exc)
+                    source_run.error_message = str(exc)[:500]
+                    source_run.completed_at = utc_now()
+                finally:
+                    source_run.query = f"{adapter_query_count} generated query task(s)"
+                    site_hunter_store.update_job(job)
+
+            job.status = SiteHunterJobStatus.NORMALIZING_RESULTS
+            listings = [self.normalizer.normalize(raw) for raw in raw_results]
+            listings = self.normalizer.dedupe(listings)
+
+            job.status = SiteHunterJobStatus.SCORING
+            job.results = self.scoring.score(listings)
+            job.status = SiteHunterJobStatus.COMPLETED if job.results else SiteHunterJobStatus.PARTIALLY_COMPLETED
+            job.completed_at = utc_now()
+            site_hunter_store.update_job(job)
+        except Exception as exc:
+            job.status = SiteHunterJobStatus.FAILED
+            job.error_message = str(exc)[:500]
+            job.completed_at = utc_now()
+            site_hunter_store.update_job(job)
+
+    def get_job(self, job_id: UUID) -> SiteHunterJob | None:
+        return site_hunter_store.get_job(job_id)
+
+    def get_results(self, job_id: UUID):
+        return site_hunter_store.get_results(job_id)
+
+    def get_site(self, site_id: UUID):
+        return site_hunter_store.get_site(site_id)
+
+    def _status_from_exception(self, exc: Exception) -> SourceRunStatus:
+        message = str(exc).lower()
+        if "403" in message or "blocked" in message or "captcha" in message:
+            return SourceRunStatus.BLOCKED
+        return SourceRunStatus.FAILED
+
+
+site_hunter_jobs = SiteHunterJobService()
