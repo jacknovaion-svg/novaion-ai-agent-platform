@@ -172,10 +172,12 @@ export interface ResultQualityStats {
   budget_mismatch_removed: number;
   radius_mismatch_removed: number;
   final_candidates: number;
+  power_screened_candidates: number;
 }
 
 export interface SiteHunterRegions {
   states: string[];
+  state_codes: string[];
   counties: string[];
   cities: string[];
   zip_codes: string[];
@@ -318,11 +320,32 @@ export interface SiteListing {
   data_truth_verification: DataTruthVerification;
 }
 
+export interface StateRegionSubJob {
+  id: string;
+  state_code: string;
+  state_name: string;
+  region_name: string;
+  region_type: string;
+  cities: string[];
+  counties: string[];
+  generated_query_count: number;
+  executed_query_count: number;
+  raw_result_count: number;
+  specific_listing_count: number;
+  final_candidate_count: number;
+  power_screened_count: number;
+  status: SiteSourceRunStatus;
+  error_message?: string | null;
+}
+
 export interface SiteHunterJob {
   id: string;
   status: SiteHunterJobStatus;
   natural_language_query_zh?: string | null;
   parsed_criteria?: SiteHunterStructuredCriteria | null;
+  job_mode: string;
+  state_job?: Record<string, unknown> | null;
+  region_subjobs: StateRegionSubJob[];
   generated_queries: GeneratedSearchQuery[];
   discovered_sources: DiscoveredSource[];
   source_runs: SiteSourceRun[];

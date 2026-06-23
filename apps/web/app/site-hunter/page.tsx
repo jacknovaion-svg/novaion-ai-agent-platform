@@ -63,6 +63,7 @@ export default function SiteHunterSearchPage() {
         structured_criteria: {
           regions: {
             states: splitList(states),
+            state_codes: splitList(states).filter((item) => /^[A-Za-z]{2}$/.test(item)).map((item) => item.toUpperCase()),
             counties: splitList(counties),
             cities: splitList(cities),
             zip_codes: [...splitList(zipCodes), ...(zipMatch ? [center.slice(0, 5)] : [])],

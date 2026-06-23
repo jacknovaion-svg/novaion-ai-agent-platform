@@ -60,6 +60,7 @@ export type SiteHunterPayload = {
   structured_criteria?: {
     regions: {
       states: string[];
+      state_codes?: string[];
       counties: string[];
       cities: string[];
       zip_codes: string[];

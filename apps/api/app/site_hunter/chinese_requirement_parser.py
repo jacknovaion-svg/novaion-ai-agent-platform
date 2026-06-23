@@ -3,45 +3,7 @@ from __future__ import annotations
 import re
 
 from app.site_hunter.models import SearchAnchorStatus, SearchAnchorType, SiteHunterRegions, SiteHunterStructuredCriteria, SiteSearchAnchor
-
-
-STATE_ALIASES = {
-    "德州": "Texas",
-    "德克萨斯": "Texas",
-    "texas": "Texas",
-    "tx": "Texas",
-    "乔治亚": "Georgia",
-    "佐治亚": "Georgia",
-    "georgia": "Georgia",
-    "ga": "Georgia",
-    "加州": "California",
-    "加利福尼亚": "California",
-    "california": "California",
-    "ca": "California",
-    "亚利桑那": "Arizona",
-    "arizona": "Arizona",
-    "az": "Arizona",
-    "内华达": "Nevada",
-    "nevada": "Nevada",
-    "nv": "Nevada",
-    "俄亥俄": "Ohio",
-    "ohio": "Ohio",
-    "oh": "Ohio",
-    "北卡": "North Carolina",
-    "北卡罗来纳": "North Carolina",
-    "南卡": "South Carolina",
-    "南卡罗来纳": "South Carolina",
-    "田纳西": "Tennessee",
-    "tennessee": "Tennessee",
-    "佛州": "Florida",
-    "佛罗里达": "Florida",
-    "florida": "Florida",
-    "宾州": "Pennsylvania",
-    "宾夕法尼亚": "Pennsylvania",
-    "弗吉尼亚": "Virginia",
-    "华盛顿dc": "Washington, D.C.",
-    "washington dc": "Washington, D.C.",
-}
+from app.site_hunter.us_states import all_state_aliases, normalize_state
 
 PROJECT_USE_ALIASES = {
     "ai数据中心": "ai_data_center",
@@ -83,9 +45,24 @@ class ChineseRequirementParser:
 
     def _merge_regions(self, existing: SiteHunterRegions, text: str, lowered: str) -> SiteHunterRegions:
         regions = existing.model_copy(deep=True)
-        for alias, state in STATE_ALIASES.items():
-            if alias in lowered and state not in regions.states:
-                regions.states.append(state)
+        for state_code in list(regions.state_codes):
+            state = normalize_state(state_code)
+            if state:
+                if state.name not in regions.states:
+                    regions.states.append(state.name)
+                regions.state_codes[regions.state_codes.index(state_code)] = state.code
+        for alias, state in all_state_aliases().items():
+            if self._contains_state_alias(text, lowered, alias):
+                if state.name not in regions.states:
+                    regions.states.append(state.name)
+                if state.code not in regions.state_codes:
+                    regions.state_codes.append(state.code)
+        for state_value in list(regions.states):
+            state = normalize_state(state_value)
+            if state:
+                regions.states[regions.states.index(state_value)] = state.name
+                if state.code not in regions.state_codes:
+                    regions.state_codes.append(state.code)
 
         for zip_code in re.findall(r"\b\d{5}(?:-\d{4})?\b", text):
             if zip_code not in regions.zip_codes:
@@ -98,6 +75,14 @@ class ChineseRequirementParser:
             if cleaned and cleaned not in regions.counties:
                 regions.counties.append(cleaned)
         return regions
+
+    def _contains_state_alias(self, text: str, lowered: str, alias: str) -> bool:
+        if len(alias) == 2 and alias.isascii():
+            stripped = text.strip().strip(",.;:，。；：")
+            if stripped.lower() == alias.lower():
+                return True
+            return bool(re.search(rf"\b{re.escape(alias.upper())}\b", text))
+        return alias in lowered
 
     def _search_anchor(self, text: str, regions: SiteHunterRegions) -> SiteSearchAnchor | None:
         coordinate_match = re.search(r"(-?\d{1,3}(?:\.\d+)?)\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)", text)

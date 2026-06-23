@@ -140,6 +140,7 @@ class ResultQualityStats(BaseModel):
     budget_mismatch_removed: int = 0
     radius_mismatch_removed: int = 0
     final_candidates: int = 0
+    power_screened_candidates: int = 0
 
 
 class GeocodingResult(BaseModel):
@@ -279,6 +280,7 @@ class SitePowerAssessment(BaseModel):
 
 class SiteHunterRegions(BaseModel):
     states: list[str] = Field(default_factory=list)
+    state_codes: list[str] = Field(default_factory=list)
     counties: list[str] = Field(default_factory=list)
     cities: list[str] = Field(default_factory=list)
     zip_codes: list[str] = Field(default_factory=list)
@@ -339,6 +341,8 @@ class GeneratedSearchQuery(BaseModel):
     county: str | None = None
     city: str | None = None
     property_type: str | None = None
+    region_name: str | None = None
+    region_type: str | None = None
     status: SourceRunStatus = SourceRunStatus.PENDING
     result_count: int = 0
     created_at: datetime = Field(default_factory=utc_now)
@@ -374,6 +378,24 @@ class SearchSourceRun(BaseModel):
     result_count: int = 0
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    error_message: str | None = None
+
+
+class StateRegionSubJob(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    state_code: str
+    state_name: str
+    region_name: str
+    region_type: str
+    cities: list[str] = Field(default_factory=list)
+    counties: list[str] = Field(default_factory=list)
+    generated_query_count: int = 0
+    executed_query_count: int = 0
+    raw_result_count: int = 0
+    specific_listing_count: int = 0
+    final_candidate_count: int = 0
+    power_screened_count: int = 0
+    status: SourceRunStatus = SourceRunStatus.PENDING
     error_message: str | None = None
 
 
@@ -444,6 +466,9 @@ class SiteHunterJob(BaseModel):
     status: SiteHunterJobStatus = SiteHunterJobStatus.CREATED
     natural_language_query_zh: str | None = None
     parsed_criteria: SiteHunterStructuredCriteria | None = None
+    job_mode: str = "standard_search"
+    state_job: dict[str, Any] | None = None
+    region_subjobs: list[StateRegionSubJob] = Field(default_factory=list)
     generated_queries: list[GeneratedSearchQuery] = Field(default_factory=list)
     discovered_sources: list[DiscoveredSource] = Field(default_factory=list)
     source_runs: list[SearchSourceRun] = Field(default_factory=list)

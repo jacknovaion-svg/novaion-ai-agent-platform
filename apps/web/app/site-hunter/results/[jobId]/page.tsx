@@ -10,6 +10,12 @@ export default function SiteHunterResultsPage() {
   const params = useParams<{ jobId: string }>();
   const [job, setJob] = useState<SiteHunterJob | null>(null);
   const [stateFilter, setStateFilter] = useState("");
+  const [cityCountyFilter, setCityCountyFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [minAcresFilter, setMinAcresFilter] = useState("");
+  const [maxPriceFilter, setMaxPriceFilter] = useState("");
+  const [minVoltageFilter, setMinVoltageFilter] = useState("");
+  const [maxSubstationDistanceFilter, setMaxSubstationDistanceFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -26,8 +32,22 @@ export default function SiteHunterResultsPage() {
 
   const results = useMemo(() => {
     const all = job?.results ?? [];
-    return stateFilter ? all.filter((item) => (item.state ?? "").toLowerCase().includes(stateFilter.toLowerCase())) : all;
-  }, [job?.results, stateFilter]);
+    return all.filter((item) => {
+      if (stateFilter && !(item.state ?? "").toLowerCase().includes(stateFilter.toLowerCase())) return false;
+      if (cityCountyFilter) {
+        const haystack = `${item.city ?? ""} ${item.county ?? ""}`.toLowerCase();
+        if (!haystack.includes(cityCountyFilter.toLowerCase())) return false;
+      }
+      if (typeFilter && !(item.property_type ?? "").toLowerCase().includes(typeFilter.toLowerCase())) return false;
+      if (minAcresFilter && item.land_acres != null && item.land_acres < Number(minAcresFilter)) return false;
+      if (maxPriceFilter && item.asking_price_usd != null && item.asking_price_usd > Number(maxPriceFilter)) return false;
+      const knownVoltage = item.power_assessment?.known_voltage_kv ?? item.power_assessment?.nearest_transmission_line?.voltage_kv;
+      if (minVoltageFilter && knownVoltage != null && knownVoltage < Number(minVoltageFilter)) return false;
+      const substationDistance = item.power_assessment?.nearest_substation?.distance_miles;
+      if (maxSubstationDistanceFilter && substationDistance != null && substationDistance > Number(maxSubstationDistanceFilter)) return false;
+      return true;
+    });
+  }, [job?.results, stateFilter, cityCountyFilter, typeFilter, minAcresFilter, maxPriceFilter, minVoltageFilter, maxSubstationDistanceFilter]);
   const discoveryCandidates = useMemo(() => job?.discovery_candidates ?? [], [job?.discovery_candidates]);
   const stats = job?.quality_stats;
   const anchor = job?.parsed_criteria?.search_anchor;
@@ -37,7 +57,15 @@ export default function SiteHunterResultsPage() {
       <div className="panel">
         <div className="section-label">Site Hunter Results</div>
         <h1 className="page-title">具体工业地产挂牌</h1>
-        <p className="muted">Job {params.jobId} · {job?.status ?? "loading"} · {results.length} specific listings</p>
+        <p className="muted">Job {params.jobId} · {job?.status ?? "loading"} · {job?.job_mode ?? "loading"} · {results.length} specific listings</p>
+        {job?.state_job ? (
+          <div className="site-facts" style={{ marginTop: 10 }}>
+            <span>State: {String(job.state_job.state_name ?? "unknown")}</span>
+            <span>State code: {String(job.state_job.state_code ?? "unknown")}</span>
+            <span>Regions executed: {job.region_subjobs.filter((item) => item.executed_query_count > 0).length}</span>
+            <span>Power screened: {stats?.power_screened_candidates ?? 0}</span>
+          </div>
+        ) : null}
         {anchor ? (
           <div className="site-facts" style={{ marginTop: 10 }}>
             <span>Search center: {anchor.label ?? anchor.raw_input ?? "unknown"}</span>
@@ -61,6 +89,7 @@ export default function SiteHunterResultsPage() {
             <Metric label="Budget removed" value={stats.budget_mismatch_removed} />
             <Metric label="Radius removed" value={stats.radius_mismatch_removed} />
             <Metric label="Final" value={stats.final_candidates} />
+            <Metric label="Power screened" value={stats.power_screened_candidates} />
           </div>
         ) : null}
         <div className="form-grid" style={{ marginTop: 14 }}>
@@ -68,8 +97,49 @@ export default function SiteHunterResultsPage() {
             <span>按州筛选</span>
             <input className="input" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)} />
           </label>
+          <label className="field">
+            <span>城市/县筛选</span>
+            <input className="input" value={cityCountyFilter} onChange={(event) => setCityCountyFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>地产类型</span>
+            <input className="input" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Min acres</span>
+            <input className="input" type="number" value={minAcresFilter} onChange={(event) => setMinAcresFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Max price</span>
+            <input className="input" type="number" value={maxPriceFilter} onChange={(event) => setMaxPriceFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Min line voltage kV</span>
+            <input className="input" type="number" value={minVoltageFilter} onChange={(event) => setMinVoltageFilter(event.target.value)} />
+          </label>
+          <label className="field">
+            <span>Max substation miles</span>
+            <input className="input" type="number" value={maxSubstationDistanceFilter} onChange={(event) => setMaxSubstationDistanceFilter(event.target.value)} />
+          </label>
         </div>
       </div>
+      {job?.region_subjobs?.length ? (
+        <div className="panel">
+          <div className="section-label">State Region Subjobs</div>
+          <h2>已执行区域</h2>
+          <div className="stack-list">
+            {job.region_subjobs.map((region) => (
+              <div className="compact-row" key={region.id}>
+                <span>
+                  <strong>{region.region_name}</strong>
+                  <small className="muted"> · {region.region_type} · queries {region.executed_query_count}/{region.generated_query_count} · raw {region.raw_result_count} · candidates {region.final_candidate_count} · power {region.power_screened_count}</small>
+                </span>
+                <span className="pill">{region.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="site-card-grid">
         {results.map((site) => (
           <SiteCard site={site} key={site.id} />
@@ -120,6 +190,9 @@ function SiteCard({ site }: { site: SiteListing }) {
         <span>Price: {site.asking_price_usd ? `$${site.asking_price_usd.toLocaleString()}` : "unknown"}</span>
         <span>Anchor distance: {site.distance_to_search_anchor_miles != null ? `${site.distance_to_search_anchor_miles} mi` : "unknown"}</span>
         <span>Type: {site.property_type ?? "unknown"}</span>
+        <span>Region: {String(site.raw_data_json.region_name ?? "unknown")}</span>
+        <span>Known voltage: {site.power_assessment?.known_voltage_kv ? `${site.power_assessment.known_voltage_kv} kV` : "unknown"}</span>
+        <span>Substation: {site.power_assessment?.nearest_substation?.distance_miles != null ? `${site.power_assessment.nearest_substation.distance_miles} mi` : "unknown"}</span>
         <span>Completeness: {Math.round(site.data_completeness_score * 100)}%</span>
       </div>
       <p>{site.translated_summary_zh}</p>
