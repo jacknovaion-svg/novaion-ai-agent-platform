@@ -56,6 +56,13 @@ export type SiteSourceRunStatus = "pending" | "searching" | "success" | "failed"
 export type SiteResultCategory = "specific_listing" | "listing_collection" | "source_page" | "irrelevant";
 export type PowerAddressStatus = "verified_address" | "geocoded_address" | "partial_address" | "address_needs_verification" | "geocoding_failed";
 export type LandIdReviewStatus = "not_reviewed" | "in_review" | "manually_verified" | "mismatch_found";
+export type DataTruthVerificationStatus =
+  | "official_verified"
+  | "manual_map_confirmed"
+  | "source_confirmed"
+  | "estimated"
+  | "conflicting"
+  | "unverified";
 
 export interface NearbyPowerAsset {
   id: string;
@@ -133,6 +140,22 @@ export interface SitePowerAssessment {
   confidence_level: string;
   checked_at: string;
   error_message?: string | null;
+}
+
+export interface DataTruthVerification {
+  automatic_result_summary?: string | null;
+  land_id_result_summary?: string | null;
+  official_source_summary?: string | null;
+  conflict_summary?: string | null;
+  final_verification_status: DataTruthVerificationStatus;
+  verified_at?: string | null;
+  verified_by?: string | null;
+  notes?: string | null;
+  field_sources: Record<string, string>;
+  conflicting_fields: string[];
+  capacity_status: string;
+  verification_warning: string;
+  updated_at: string;
 }
 
 export interface ResultQualityStats {
@@ -267,6 +290,7 @@ export interface SiteListing {
   review_status?: string | null;
   power_assessment?: SitePowerAssessment | null;
   land_id_review: LandIdReview;
+  data_truth_verification: DataTruthVerification;
 }
 
 export interface SiteHunterJob {

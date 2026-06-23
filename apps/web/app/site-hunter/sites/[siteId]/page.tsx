@@ -1,21 +1,24 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
-import type { LandIdReview, NearbyPowerAsset, SiteListing, SitePowerAssessment } from "@novaion/shared/types";
-import { getSiteHunterSite, reviewSiteHunterSite, updateLandIdReview } from "@/lib/api";
+import type { DataTruthVerification, LandIdReview, NearbyPowerAsset, SiteListing, SitePowerAssessment } from "@novaion/shared/types";
+import { getSiteHunterSite, reviewSiteHunterSite, updateDataTruthVerification, updateLandIdReview } from "@/lib/api";
 
 export default function SiteHunterSiteDetailPage() {
   const params = useParams<{ siteId: string }>();
   const [site, setSite] = useState<SiteListing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [landForm, setLandForm] = useState<Partial<LandIdReview>>({});
+  const [truthForm, setTruthForm] = useState<Partial<DataTruthVerification>>({});
 
   useEffect(() => {
     getSiteHunterSite(params.siteId)
       .then((next) => {
         setSite(next);
         setLandForm(next.land_id_review ?? {});
+        setTruthForm(next.data_truth_verification ?? {});
         setError(null);
       })
       .catch((err) => {
@@ -54,6 +57,28 @@ export default function SiteHunterSiteDetailPage() {
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Land id review failed");
+    }
+  }
+
+  async function saveTruthVerification(status?: string) {
+    if (!site) return;
+    try {
+      const updated = await updateDataTruthVerification(params.siteId, {
+        automatic_result_summary: truthForm.automatic_result_summary,
+        land_id_result_summary: truthForm.land_id_result_summary,
+        official_source_summary: truthForm.official_source_summary,
+        conflict_summary: truthForm.conflict_summary,
+        final_verification_status: status ?? truthForm.final_verification_status ?? "unverified",
+        verified_by: truthForm.verified_by,
+        notes: truthForm.notes,
+        field_sources: truthForm.field_sources ?? {},
+        conflicting_fields: truthForm.conflicting_fields ?? [],
+      });
+      setSite(updated);
+      setTruthForm(updated.data_truth_verification);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Data truth verification failed");
     }
   }
 
@@ -116,6 +141,13 @@ export default function SiteHunterSiteDetailPage() {
       </section>
 
       <PowerAssessmentPanel assessment={site.power_assessment} landIdReview={site.land_id_review} onCopy={copyPowerContext} />
+
+      <DataTruthVerificationPanel
+        verification={site.data_truth_verification}
+        form={truthForm}
+        setForm={setTruthForm}
+        onSave={saveTruthVerification}
+      />
 
       <section className="panel">
         <div className="section-label">Land id 人工核查</div>
@@ -185,6 +217,97 @@ export default function SiteHunterSiteDetailPage() {
         </ul>
       </section>
     </div>
+  );
+}
+
+function DataTruthVerificationPanel({
+  verification: verificationInput,
+  form,
+  setForm,
+  onSave,
+}: {
+  verification?: DataTruthVerification | null;
+  form: Partial<DataTruthVerification>;
+  setForm: Dispatch<SetStateAction<Partial<DataTruthVerification>>>;
+  onSave: (status?: string) => void;
+}) {
+  const verification = verificationInput ?? {
+    final_verification_status: "unverified",
+    field_sources: {},
+    conflicting_fields: [],
+    capacity_status: "unknown",
+    verification_warning: "真实性验证不代表Utility容量、接入许可、接入成本或送电时间已经确认。",
+    updated_at: new Date().toISOString(),
+  };
+  const status = form.final_verification_status ?? verification.final_verification_status ?? "unverified";
+  const conflictText = (form.conflicting_fields ?? verification.conflicting_fields ?? []).join(", ");
+  return (
+    <section className="panel">
+      <div className="section-label">数据真实性验证</div>
+      <h2>Truth Verification</h2>
+      <p className="danger-text">{verification.verification_warning}</p>
+      <div className="fact-grid">
+        <span>Final status: {verification.final_verification_status}</span>
+        <span>Capacity: {verification.capacity_status}</span>
+        <span>Verified at: {verification.verified_at ?? "not verified"}</span>
+        <span>Reviewer: {verification.verified_by ?? "unknown"}</span>
+      </div>
+      <div className="form-grid" style={{ marginTop: 14 }}>
+        <label className="field">
+          <span>最终验证状态</span>
+          <select
+            className="input"
+            value={status}
+            onChange={(event) => setForm({ ...form, final_verification_status: event.target.value as DataTruthVerification["final_verification_status"] })}
+          >
+            <option value="unverified">unverified</option>
+            <option value="estimated">estimated</option>
+            <option value="source_confirmed">source_confirmed</option>
+            <option value="manual_map_confirmed">manual_map_confirmed</option>
+            <option value="official_verified">official_verified</option>
+            <option value="conflicting">conflicting</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>核查人员</span>
+          <input className="input" value={form.verified_by ?? ""} onChange={(event) => setForm({ ...form, verified_by: event.target.value })} />
+        </label>
+      </div>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>自动检测结果</span>
+        <textarea className="textarea" value={form.automatic_result_summary ?? ""} onChange={(event) => setForm({ ...form, automatic_result_summary: event.target.value })} />
+      </label>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>Land id人工核查结果</span>
+        <textarea className="textarea" value={form.land_id_result_summary ?? ""} onChange={(event) => setForm({ ...form, land_id_result_summary: event.target.value })} />
+      </label>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>官方来源 / 政府GIS</span>
+        <textarea className="textarea" value={form.official_source_summary ?? ""} onChange={(event) => setForm({ ...form, official_source_summary: event.target.value })} />
+      </label>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>数据冲突</span>
+        <textarea className="textarea" value={form.conflict_summary ?? ""} onChange={(event) => setForm({ ...form, conflict_summary: event.target.value })} />
+      </label>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>冲突字段，用逗号分隔</span>
+        <input
+          className="input"
+          value={conflictText}
+          onChange={(event) => setForm({ ...form, conflicting_fields: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) })}
+        />
+      </label>
+      <label className="field" style={{ marginTop: 14 }}>
+        <span>备注</span>
+        <textarea className="textarea" value={form.notes ?? ""} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+      </label>
+      <div className="actions">
+        <button className="button secondary" type="button" onClick={() => onSave("source_confirmed")}>标记双来源一致</button>
+        <button className="button secondary" type="button" onClick={() => onSave("manual_map_confirmed")}>标记Land id人工确认</button>
+        <button className="button primary" type="button" onClick={() => onSave(status)}>保存真实性验证</button>
+        <button className="button secondary" type="button" onClick={() => onSave("conflicting")}>标记存在冲突</button>
+      </div>
+    </section>
   );
 }
 

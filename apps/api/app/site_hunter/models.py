@@ -106,6 +106,15 @@ class LandIdReviewStatus(str, Enum):
     MISMATCH_FOUND = "mismatch_found"
 
 
+class DataTruthVerificationStatus(str, Enum):
+    OFFICIAL_VERIFIED = "official_verified"
+    MANUAL_MAP_CONFIRMED = "manual_map_confirmed"
+    SOURCE_CONFIRMED = "source_confirmed"
+    ESTIMATED = "estimated"
+    CONFLICTING = "conflicting"
+    UNVERIFIED = "unverified"
+
+
 class ResultQualityStats(BaseModel):
     raw_results: int = 0
     specific_listings: int = 0
@@ -201,6 +210,34 @@ class LandIdReviewRequest(BaseModel):
     nearest_substation_distance: float | None = None
     nearest_transmission_voltage: float | None = None
     manual_notes: str | None = None
+
+
+class DataTruthVerification(BaseModel):
+    automatic_result_summary: str | None = None
+    land_id_result_summary: str | None = None
+    official_source_summary: str | None = None
+    conflict_summary: str | None = None
+    final_verification_status: DataTruthVerificationStatus = DataTruthVerificationStatus.UNVERIFIED
+    verified_at: datetime | None = None
+    verified_by: str | None = None
+    notes: str | None = None
+    field_sources: dict[str, str] = Field(default_factory=dict)
+    conflicting_fields: list[str] = Field(default_factory=list)
+    capacity_status: str = "unknown"
+    verification_warning: str = "真实性验证不代表Utility容量、接入许可、接入成本或送电时间已经确认。"
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class DataTruthVerificationRequest(BaseModel):
+    automatic_result_summary: str | None = None
+    land_id_result_summary: str | None = None
+    official_source_summary: str | None = None
+    conflict_summary: str | None = None
+    final_verification_status: DataTruthVerificationStatus = DataTruthVerificationStatus.UNVERIFIED
+    verified_by: str | None = None
+    notes: str | None = None
+    field_sources: dict[str, str] = Field(default_factory=dict)
+    conflicting_fields: list[str] = Field(default_factory=list)
 
 
 class SitePowerAssessment(BaseModel):
@@ -363,6 +400,7 @@ class NormalizedSiteListing(BaseModel):
     review_status: SiteReviewStatus | None = None
     power_assessment: SitePowerAssessment | None = None
     land_id_review: LandIdReview = Field(default_factory=LandIdReview)
+    data_truth_verification: DataTruthVerification = Field(default_factory=DataTruthVerification)
 
 
 class SiteHunterJob(BaseModel):

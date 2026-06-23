@@ -138,3 +138,23 @@ export async function updateLandIdReview(siteId: string, payload: {
   if (!response.ok) throw new Error("Land id review save failed");
   return response.json();
 }
+
+export async function updateDataTruthVerification(siteId: string, payload: {
+  automatic_result_summary?: string | null;
+  land_id_result_summary?: string | null;
+  official_source_summary?: string | null;
+  conflict_summary?: string | null;
+  final_verification_status: string;
+  verified_by?: string | null;
+  notes?: string | null;
+  field_sources?: Record<string, string>;
+  conflicting_fields?: string[];
+}) {
+  const response = await fetch(`${API_BASE}/site-hunter/sites/${siteId}/data-truth-verification`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Data truth verification save failed");
+  return response.json();
+}

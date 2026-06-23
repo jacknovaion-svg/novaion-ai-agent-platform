@@ -6,7 +6,17 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from app.site_hunter.job_service import site_hunter_jobs
-from app.site_hunter.models import LandIdReview, LandIdReviewRequest, NormalizedSiteListing, SiteHunterJob, SiteHunterSearchRequest, SiteReviewRequest, utc_now
+from app.site_hunter.models import (
+    DataTruthVerification,
+    DataTruthVerificationRequest,
+    LandIdReview,
+    LandIdReviewRequest,
+    NormalizedSiteListing,
+    SiteHunterJob,
+    SiteHunterSearchRequest,
+    SiteReviewRequest,
+    utc_now,
+)
 from app.site_hunter.store import site_hunter_store
 
 router = APIRouter(prefix="/site-hunter", tags=["site-hunter"])
@@ -55,6 +65,15 @@ def review_site(site_id: UUID, payload: SiteReviewRequest) -> NormalizedSiteList
 def update_land_id_review(site_id: UUID, payload: LandIdReviewRequest) -> NormalizedSiteListing:
     review = LandIdReview(**payload.model_dump(), reviewed_at=utc_now())
     site = site_hunter_store.update_land_id_review(site_id, review)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return site
+
+
+@router.post("/sites/{site_id}/data-truth-verification", response_model=NormalizedSiteListing)
+def update_data_truth_verification(site_id: UUID, payload: DataTruthVerificationRequest) -> NormalizedSiteListing:
+    verification = DataTruthVerification(**payload.model_dump(), verified_at=utc_now(), updated_at=utc_now())
+    site = site_hunter_store.update_data_truth_verification(site_id, verification)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     return site
