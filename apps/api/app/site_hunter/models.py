@@ -106,6 +106,19 @@ class LandIdReviewStatus(str, Enum):
     MISMATCH_FOUND = "mismatch_found"
 
 
+class SearchAnchorType(str, Enum):
+    ZIP_CODE = "zip_code"
+    COORDINATES = "coordinates"
+    ADDRESS = "address"
+    UNKNOWN = "unknown"
+
+
+class SearchAnchorStatus(str, Enum):
+    UNRESOLVED = "unresolved"
+    RESOLVED = "resolved"
+    FAILED = "failed"
+
+
 class DataTruthVerificationStatus(str, Enum):
     OFFICIAL_VERIFIED = "official_verified"
     MANUAL_MAP_CONFIRMED = "manual_map_confirmed"
@@ -125,6 +138,7 @@ class ResultQualityStats(BaseModel):
     state_mismatch_removed: int = 0
     size_mismatch_removed: int = 0
     budget_mismatch_removed: int = 0
+    radius_mismatch_removed: int = 0
     final_candidates: int = 0
 
 
@@ -272,8 +286,28 @@ class SiteHunterRegions(BaseModel):
     radius_miles: float | None = None
 
 
+class SiteSearchAnchor(BaseModel):
+    input_type: SearchAnchorType = SearchAnchorType.UNKNOWN
+    raw_input: str | None = None
+    label: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    radius_miles: float | None = None
+    city: str | None = None
+    county: str | None = None
+    state: str | None = None
+    zip_code: str | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    confidence: float = 0
+    status: SearchAnchorStatus = SearchAnchorStatus.UNRESOLVED
+    error_message: str | None = None
+    resolved_at: datetime | None = None
+
+
 class SiteHunterStructuredCriteria(BaseModel):
     regions: SiteHunterRegions = Field(default_factory=SiteHunterRegions)
+    search_anchor: SiteSearchAnchor | None = None
     property_types: list[str] = Field(default_factory=list)
     transaction_types: list[str] = Field(default_factory=lambda: ["for sale"])
     min_land_acres: float | None = None
@@ -398,6 +432,8 @@ class NormalizedSiteListing(BaseModel):
     score_reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     review_status: SiteReviewStatus | None = None
+    distance_to_search_anchor_miles: float | None = None
+    search_anchor_distance_basis: str | None = None
     power_assessment: SitePowerAssessment | None = None
     land_id_review: LandIdReview = Field(default_factory=LandIdReview)
     data_truth_verification: DataTruthVerification = Field(default_factory=DataTruthVerification)

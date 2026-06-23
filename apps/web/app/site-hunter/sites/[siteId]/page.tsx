@@ -135,6 +135,8 @@ export default function SiteHunterSiteDetailPage() {
           <span>Acres: {site.land_acres ?? "unknown"}</span>
           <span>Building sqft: {site.building_sqft ?? "unknown"}</span>
           <span>Price: {site.asking_price_usd ? `$${site.asking_price_usd.toLocaleString()}` : "unknown"}</span>
+          <span>Anchor distance: {site.distance_to_search_anchor_miles != null ? `${site.distance_to_search_anchor_miles} mi` : "unknown"}</span>
+          <span>Distance basis: {site.search_anchor_distance_basis ?? "unknown"}</span>
           <span>Broker/source: {site.broker_company ?? site.source_name}</span>
           <span>Zoning: {site.zoning ?? "unknown"}</span>
         </div>

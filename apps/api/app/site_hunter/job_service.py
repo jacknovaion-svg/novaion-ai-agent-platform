@@ -22,9 +22,11 @@ from app.site_hunter.models import (
 )
 from app.site_hunter.normalizer import PropertyNormalizer
 from app.site_hunter.power_screening import PowerScreeningService
+from app.site_hunter.power_geometry import haversine_miles
 from app.site_hunter.quality import ResultQualityService
 from app.site_hunter.query_builder import EnglishSearchQueryBuilder
 from app.site_hunter.scoring import SiteOpportunityScoringService
+from app.site_hunter.search_anchor import SearchAnchorResolver
 from app.site_hunter.source_discovery import SourceDiscoveryService
 from app.site_hunter.store import site_hunter_store
 
@@ -32,6 +34,7 @@ from app.site_hunter.store import site_hunter_store
 class SiteHunterJobService:
     def __init__(self) -> None:
         self.parser = ChineseRequirementParser()
+        self.anchor_resolver = SearchAnchorResolver()
         self.query_builder = EnglishSearchQueryBuilder()
         self.source_discovery = SourceDiscoveryService()
         self.normalizer = PropertyNormalizer()
@@ -62,6 +65,7 @@ class SiteHunterJobService:
             site_hunter_store.update_job(job)
 
             parsed = self.parser.parse(request.natural_language_query_zh or "", request.structured_criteria)
+            parsed = await self.anchor_resolver.resolve(parsed)
             job.parsed_criteria = parsed
 
             job.status = SiteHunterJobStatus.GENERATING_QUERIES
@@ -117,7 +121,8 @@ class SiteHunterJobService:
 
             job.status = SiteHunterJobStatus.SCORING
             scored = self.scoring.score(final_candidates)
-            job.results = await self.power_screening.assess_sites(scored)
+            assessed = await self.power_screening.assess_sites(scored)
+            job.results = self._apply_anchor_distances(assessed, parsed, job)
             job.status = SiteHunterJobStatus.COMPLETED if job.results else SiteHunterJobStatus.PARTIALLY_COMPLETED
             job.completed_at = utc_now()
             site_hunter_store.update_job(job)
@@ -186,6 +191,29 @@ class SiteHunterJobService:
             if len(selected) >= max_queries:
                 break
         return selected
+
+    def _apply_anchor_distances(self, sites, criteria, job: SiteHunterJob):
+        anchor = criteria.search_anchor
+        if not anchor or anchor.latitude is None or anchor.longitude is None:
+            return sites
+        output = []
+        for site in sites:
+            assessment = site.power_assessment
+            latitude = assessment.latitude if assessment and assessment.latitude is not None else site.latitude
+            longitude = assessment.longitude if assessment and assessment.longitude is not None else site.longitude
+            if latitude is None or longitude is None:
+                site.quality_flags.append("needs_verification: distance_to_search_anchor unknown")
+                output.append(site)
+                continue
+            distance = round(haversine_miles(anchor.latitude, anchor.longitude, latitude, longitude), 3)
+            site.distance_to_search_anchor_miles = distance
+            site.search_anchor_distance_basis = "address_point_to_search_anchor"
+            if anchor.radius_miles and distance > anchor.radius_miles:
+                job.quality_stats.radius_mismatch_removed += 1
+                continue
+            output.append(site)
+        job.quality_stats.final_candidates = len(output)
+        return output
 
     def _status_from_exception(self, exc: Exception) -> SourceRunStatus:
         message = str(exc).lower()

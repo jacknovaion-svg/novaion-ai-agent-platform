@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.site_hunter.models import SiteHunterRegions, SiteHunterStructuredCriteria
+from app.site_hunter.models import SearchAnchorStatus, SearchAnchorType, SiteHunterRegions, SiteHunterStructuredCriteria, SiteSearchAnchor
 
 
 STATE_ALIASES = {
@@ -63,6 +63,8 @@ class ChineseRequirementParser:
         lowered = text.lower()
 
         criteria.regions = self._merge_regions(criteria.regions, text, lowered)
+        criteria.regions.radius_miles = criteria.regions.radius_miles or self._search_radius(text)
+        criteria.search_anchor = criteria.search_anchor or self._search_anchor(text, criteria.regions)
         criteria.property_types = self._property_types(text, lowered, criteria.property_types)
         criteria.transaction_types = self._transaction_types(text, lowered, criteria.transaction_types)
         criteria.min_land_acres = criteria.min_land_acres or self._land_acres(text)
@@ -96,6 +98,43 @@ class ChineseRequirementParser:
             if cleaned and cleaned not in regions.counties:
                 regions.counties.append(cleaned)
         return regions
+
+    def _search_anchor(self, text: str, regions: SiteHunterRegions) -> SiteSearchAnchor | None:
+        coordinate_match = re.search(r"(-?\d{1,3}(?:\.\d+)?)\s*[,，]\s*(-?\d{1,3}(?:\.\d+)?)", text)
+        if coordinate_match:
+            first = float(coordinate_match.group(1))
+            second = float(coordinate_match.group(2))
+            lat, lon = self._normalize_us_coordinate_pair(first, second)
+            return SiteSearchAnchor(
+                input_type=SearchAnchorType.COORDINATES,
+                raw_input=coordinate_match.group(0),
+                label=f"{lat:.6f}, {lon:.6f}",
+                latitude=lat,
+                longitude=lon,
+                radius_miles=regions.radius_miles,
+                source_name="user_input",
+                confidence=0.95,
+                status=SearchAnchorStatus.UNRESOLVED,
+            )
+        if len(regions.zip_codes) == 1:
+            return SiteSearchAnchor(
+                input_type=SearchAnchorType.ZIP_CODE,
+                raw_input=regions.zip_codes[0],
+                label=regions.zip_codes[0],
+                zip_code=regions.zip_codes[0][:5],
+                radius_miles=regions.radius_miles,
+                source_name="user_input",
+                confidence=0.6,
+                status=SearchAnchorStatus.UNRESOLVED,
+            )
+        return None
+
+    def _normalize_us_coordinate_pair(self, first: float, second: float) -> tuple[float, float]:
+        if 24 <= first <= 50 and -125 <= second <= -66:
+            return first, second
+        if 24 <= second <= 50 and -125 <= first <= -66:
+            return second, first
+        return first, second
 
     def _property_types(self, text: str, lowered: str, existing: list[str]) -> list[str]:
         types = list(existing)
@@ -171,6 +210,15 @@ class ChineseRequirementParser:
             return round(float(km_match.group(1)) * 0.6214, 2)
         return None
 
+    def _search_radius(self, text: str) -> float | None:
+        match = re.search(r"(?:周边|半径|附近|within|radius)?\s*(\d+(?:\.\d+)?)\s*(?:英里|mile|miles|mi)", text, flags=re.IGNORECASE)
+        if match:
+            return float(match.group(1))
+        km_match = re.search(r"(?:周边|半径|附近|within|radius)?\s*(\d+(?:\.\d+)?)\s*(?:公里|km)", text, flags=re.IGNORECASE)
+        if km_match:
+            return round(float(km_match.group(1)) * 0.6214, 2)
+        return None
+
     def _preferred_transmission_voltage(self, text: str) -> float | None:
         kv = re.search(r"(\d+(?:\.\d+)?)\s*(?:kv|kV|千伏)", text)
         return float(kv.group(1)) if kv else None
@@ -191,4 +239,8 @@ class ChineseRequirementParser:
             details.append(f"最高预算：${criteria.max_price_usd:,.0f}")
         if criteria.target_load_mw:
             details.append(f"目标负荷：{criteria.target_load_mw}MW")
+        if criteria.search_anchor:
+            details.append(f"搜索中心：{criteria.search_anchor.label or criteria.search_anchor.raw_input or 'unknown'}")
+            if criteria.search_anchor.radius_miles:
+                details.append(f"搜索半径：{criteria.search_anchor.radius_miles} miles")
         return "；".join(details)

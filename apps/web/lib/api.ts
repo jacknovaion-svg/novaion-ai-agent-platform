@@ -1,4 +1,4 @@
-import type { SearchJob, SearchMode, SearchResult, SearchSource, SiteHunterJob, SiteListing } from "@novaion/shared/types";
+import type { SearchJob, SearchMode, SearchResult, SearchSource, SiteHunterJob, SiteListing, SiteSearchAnchor } from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -66,6 +66,7 @@ export type SiteHunterPayload = {
       custom_area?: string | null;
       radius_miles?: number | null;
     };
+    search_anchor?: Partial<SiteSearchAnchor> | null;
     property_types: string[];
     transaction_types: string[];
     min_land_acres?: number | null;

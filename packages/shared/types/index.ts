@@ -56,6 +56,8 @@ export type SiteSourceRunStatus = "pending" | "searching" | "success" | "failed"
 export type SiteResultCategory = "specific_listing" | "listing_collection" | "source_page" | "irrelevant";
 export type PowerAddressStatus = "verified_address" | "geocoded_address" | "partial_address" | "address_needs_verification" | "geocoding_failed";
 export type LandIdReviewStatus = "not_reviewed" | "in_review" | "manually_verified" | "mismatch_found";
+export type SearchAnchorType = "zip_code" | "coordinates" | "address" | "unknown";
+export type SearchAnchorStatus = "unresolved" | "resolved" | "failed";
 export type DataTruthVerificationStatus =
   | "official_verified"
   | "manual_map_confirmed"
@@ -168,6 +170,7 @@ export interface ResultQualityStats {
   state_mismatch_removed: number;
   size_mismatch_removed: number;
   budget_mismatch_removed: number;
+  radius_mismatch_removed: number;
   final_candidates: number;
 }
 
@@ -180,8 +183,28 @@ export interface SiteHunterRegions {
   radius_miles?: number | null;
 }
 
+export interface SiteSearchAnchor {
+  input_type: SearchAnchorType;
+  raw_input?: string | null;
+  label?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  radius_miles?: number | null;
+  city?: string | null;
+  county?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  source_name?: string | null;
+  source_url?: string | null;
+  confidence: number;
+  status: SearchAnchorStatus;
+  error_message?: string | null;
+  resolved_at?: string | null;
+}
+
 export interface SiteHunterStructuredCriteria {
   regions: SiteHunterRegions;
+  search_anchor?: SiteSearchAnchor | null;
   property_types: string[];
   transaction_types: string[];
   min_land_acres?: number | null;
@@ -288,6 +311,8 @@ export interface SiteListing {
   score_reasons: string[];
   warnings: string[];
   review_status?: string | null;
+  distance_to_search_anchor_miles?: number | null;
+  search_anchor_distance_basis?: string | null;
   power_assessment?: SitePowerAssessment | null;
   land_id_review: LandIdReview;
   data_truth_verification: DataTruthVerification;

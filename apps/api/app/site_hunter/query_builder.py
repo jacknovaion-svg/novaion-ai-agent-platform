@@ -14,6 +14,7 @@ class EnglishSearchQueryBuilder:
         transaction = criteria.transaction_types[0] if criteria.transaction_types else "for sale"
         area_suffix = f" {criteria.min_land_acres:g}+ acres" if criteria.min_land_acres else ""
         price_suffix = f" under ${criteria.max_price_usd:,.0f}" if criteria.max_price_usd else ""
+        radius_suffix = f" within {criteria.search_anchor.radius_miles:g} miles" if criteria.search_anchor and criteria.search_anchor.radius_miles else ""
 
         queries: list[GeneratedSearchQuery] = []
         for region in regions:
@@ -21,7 +22,7 @@ class EnglishSearchQueryBuilder:
             for term in terms[:8]:
                 queries.append(
                     GeneratedSearchQuery(
-                        generated_query_en=f"{term} {transaction} {phrase}{area_suffix}{price_suffix}".strip(),
+                        generated_query_en=f"{term} {transaction} {phrase}{area_suffix}{price_suffix}{radius_suffix}".strip(),
                         source_group="property_market",
                         state=state,
                         county=county,
@@ -83,10 +84,23 @@ class EnglishSearchQueryBuilder:
     def _region_phrases(self, criteria: SiteHunterStructuredCriteria) -> list[tuple[str | None, str | None, str | None, str]]:
         regions = criteria.regions
         phrases: list[tuple[str | None, str | None, str | None, str]] = []
+        anchor = criteria.search_anchor
+        if anchor:
+            if anchor.city and anchor.state:
+                phrases.append((anchor.state, anchor.county, anchor.city, f"near {anchor.city} {anchor.state}"))
+            if anchor.county and anchor.state:
+                phrases.append((anchor.state, anchor.county, None, f"near {self._county_phrase(anchor.county)} {anchor.state}"))
+            if anchor.zip_code:
+                zip_phrase = f"near ZIP {anchor.zip_code}"
+                if anchor.city and anchor.state:
+                    zip_phrase = f"near {anchor.zip_code} {anchor.city} {anchor.state}"
+                phrases.append((anchor.state, anchor.county, anchor.city, zip_phrase))
+            if anchor.latitude is not None and anchor.longitude is not None:
+                phrases.append((anchor.state, anchor.county, anchor.city, f"near {anchor.latitude:.6f}, {anchor.longitude:.6f}"))
         for state in regions.states:
             phrases.append((state, None, None, state))
             for county in regions.counties:
-                phrases.append((state, county, None, f"{county} County {state}"))
+                phrases.append((state, county, None, f"{self._county_phrase(county)} {state}"))
             for city in regions.cities:
                 phrases.append((state, None, city, f"{city} {state}"))
         if not phrases:
@@ -95,6 +109,10 @@ class EnglishSearchQueryBuilder:
         if not phrases and regions.custom_area:
             phrases.append((None, None, None, regions.custom_area))
         return phrases or [(None, None, None, "United States")]
+
+    def _county_phrase(self, county: str) -> str:
+        cleaned = county.strip()
+        return cleaned if cleaned.lower().endswith(" county") else f"{cleaned} County"
 
     def _dedupe(self, queries: list[GeneratedSearchQuery]) -> list[GeneratedSearchQuery]:
         seen: set[str] = set()

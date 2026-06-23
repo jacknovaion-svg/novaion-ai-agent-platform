@@ -30,6 +30,7 @@ export default function SiteHunterResultsPage() {
   }, [job?.results, stateFilter]);
   const discoveryCandidates = useMemo(() => job?.discovery_candidates ?? [], [job?.discovery_candidates]);
   const stats = job?.quality_stats;
+  const anchor = job?.parsed_criteria?.search_anchor;
 
   return (
     <div className="grid">
@@ -37,6 +38,15 @@ export default function SiteHunterResultsPage() {
         <div className="section-label">Site Hunter Results</div>
         <h1 className="page-title">具体工业地产挂牌</h1>
         <p className="muted">Job {params.jobId} · {job?.status ?? "loading"} · {results.length} specific listings</p>
+        {anchor ? (
+          <div className="site-facts" style={{ marginTop: 10 }}>
+            <span>Search center: {anchor.label ?? anchor.raw_input ?? "unknown"}</span>
+            <span>Status: {anchor.status}</span>
+            <span>Radius: {anchor.radius_miles ? `${anchor.radius_miles} mi` : "unknown"}</span>
+            <span>Coordinates: {anchor.latitude && anchor.longitude ? `${anchor.latitude.toFixed(6)}, ${anchor.longitude.toFixed(6)}` : "unknown"}</span>
+            <span>Resolved by: {anchor.source_name ?? "unknown"}</span>
+          </div>
+        ) : null}
         {error ? <p className="danger-text">{error}</p> : null}
         {stats ? (
           <div className="metric-grid quality-metrics">
@@ -49,6 +59,7 @@ export default function SiteHunterResultsPage() {
             <Metric label="State removed" value={stats.state_mismatch_removed} />
             <Metric label="Size removed" value={stats.size_mismatch_removed} />
             <Metric label="Budget removed" value={stats.budget_mismatch_removed} />
+            <Metric label="Radius removed" value={stats.radius_mismatch_removed} />
             <Metric label="Final" value={stats.final_candidates} />
           </div>
         ) : null}
@@ -107,6 +118,7 @@ function SiteCard({ site }: { site: SiteListing }) {
         <span>Address: {site.address_status}</span>
         <span>Acres: {site.land_acres ?? "unknown"}</span>
         <span>Price: {site.asking_price_usd ? `$${site.asking_price_usd.toLocaleString()}` : "unknown"}</span>
+        <span>Anchor distance: {site.distance_to_search_anchor_miles != null ? `${site.distance_to_search_anchor_miles} mi` : "unknown"}</span>
         <span>Type: {site.property_type ?? "unknown"}</span>
         <span>Completeness: {Math.round(site.data_completeness_score * 100)}%</span>
       </div>
