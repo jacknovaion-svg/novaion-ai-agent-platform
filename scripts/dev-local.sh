@@ -17,6 +17,10 @@ fi
 export API_CORS_ORIGINS="${API_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}"
 export NEXT_PUBLIC_API_BASE_URL="${NEXT_PUBLIC_API_BASE_URL:-http://127.0.0.1:8000/api/v1}"
 export SITE_HUNTER_SEARCH_PROVIDER="${SITE_HUNTER_SEARCH_PROVIDER:-duckduckgo_html}"
+export GEOCODING_PROVIDER="${GEOCODING_PROVIDER:-census}"
+export NOMINATIM_USER_AGENT="${NOMINATIM_USER_AGENT:-NOVAIONSiteHunterLocal/1.2}"
+export OVERPASS_API_URL="${OVERPASS_API_URL:-https://overpass-api.de/api/interpreter}"
+export POWER_ASSET_SEARCH_RADII_MILES="${POWER_ASSET_SEARCH_RADII_MILES:-1,3,5,10}"
 
 if [ ! -x "$API_DIR/.venv/bin/uvicorn" ]; then
   echo "Missing FastAPI virtualenv at apps/api/.venv."
@@ -41,6 +45,8 @@ echo "API docs: http://127.0.0.1:8000/docs"
 echo "Frontend: http://localhost:3000/site-hunter"
 echo "Frontend API base: $NEXT_PUBLIC_API_BASE_URL"
 echo "Search provider: $SITE_HUNTER_SEARCH_PROVIDER"
+echo "Geocoding provider: $GEOCODING_PROVIDER"
+echo "Power asset radii: $POWER_ASSET_SEARCH_RADII_MILES"
 
 (
   cd "$API_DIR"

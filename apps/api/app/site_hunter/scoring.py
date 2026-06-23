@@ -34,7 +34,7 @@ class SiteOpportunityScoringService:
             listing.preliminary_score = round(min(score, 100), 2)
             listing.preliminary_grade = self._grade(listing.preliminary_score)
             listing.score_reasons = reasons
-            listing.warnings.append("Power assets and utility capacity are reserved for the next phase.")
+            listing.warnings.append("Nearby power assets do not confirm utility capacity, interconnection approval, cost, or energization timeline.")
         return sorted(listings, key=lambda item: item.preliminary_score, reverse=True)
 
     def _grade(self, score: float) -> str:

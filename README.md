@@ -162,6 +162,7 @@ Implemented:
 - Property normalization, basic dedupe, missing-field labeling, source confidence, and Chinese summaries
 - Result quality classification: `specific_listing`, `listing_collection`, `source_page`, and `irrelevant`
 - Result quality stats and filtering for state, known acreage, known budget, irrelevant pages, and duplicates
+- V1.2 local power screening: address geocoding, OpenStreetMap power assets, optional local transmission GeoJSON, likely utility estimate, and Land id manual review fields
 - Site Hunter frontend pages: search, progress, results, and detail/review
 - Supabase schema for discovered sources, site listings, source documents, coordinates, and reserved power-assessment tables
 

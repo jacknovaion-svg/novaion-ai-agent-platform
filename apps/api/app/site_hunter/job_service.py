@@ -21,6 +21,7 @@ from app.site_hunter.models import (
     utc_now,
 )
 from app.site_hunter.normalizer import PropertyNormalizer
+from app.site_hunter.power_screening import PowerScreeningService
 from app.site_hunter.quality import ResultQualityService
 from app.site_hunter.query_builder import EnglishSearchQueryBuilder
 from app.site_hunter.scoring import SiteOpportunityScoringService
@@ -35,6 +36,7 @@ class SiteHunterJobService:
         self.source_discovery = SourceDiscoveryService()
         self.normalizer = PropertyNormalizer()
         self.quality = ResultQualityService()
+        self.power_screening = PowerScreeningService()
         self.scoring = SiteOpportunityScoringService()
         self.adapters: list[PropertySourceAdapter] = [
             WebSearchPropertyAdapter(),
@@ -114,7 +116,8 @@ class SiteHunterJobService:
             job.quality_stats = quality_stats
 
             job.status = SiteHunterJobStatus.SCORING
-            job.results = self.scoring.score(final_candidates)
+            scored = self.scoring.score(final_candidates)
+            job.results = await self.power_screening.assess_sites(scored)
             job.status = SiteHunterJobStatus.COMPLETED if job.results else SiteHunterJobStatus.PARTIALLY_COMPLETED
             job.completed_at = utc_now()
             site_hunter_store.update_job(job)

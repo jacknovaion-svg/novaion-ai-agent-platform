@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from app.site_hunter.models import NormalizedSiteListing, SiteHunterJob, SiteReviewRequest, utc_now
+from app.site_hunter.models import LandIdReview, NormalizedSiteListing, SiteHunterJob, SiteReviewRequest, utc_now
 
 
 class SiteHunterMemoryStore:
@@ -37,6 +37,20 @@ class SiteHunterMemoryStore:
             return None
         site.review_status = payload.status
         self.sites[site_id] = site
+        return site
+
+    def update_land_id_review(self, site_id: UUID, review: LandIdReview) -> NormalizedSiteListing | None:
+        site = self.sites.get(site_id)
+        if not site:
+            return None
+        site.land_id_review = review
+        self.sites[site_id] = site
+        for job in self.jobs.values():
+            for candidate in [*job.results, *job.discovery_candidates]:
+                if candidate.id == site_id:
+                    candidate.land_id_review = review
+                    candidate.power_assessment = site.power_assessment
+                    job.updated_at = utc_now()
         return site
 
 

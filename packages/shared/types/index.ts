@@ -54,6 +54,86 @@ export type SiteHunterJobStatus =
 
 export type SiteSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
 export type SiteResultCategory = "specific_listing" | "listing_collection" | "source_page" | "irrelevant";
+export type PowerAddressStatus = "verified_address" | "geocoded_address" | "partial_address" | "address_needs_verification" | "geocoding_failed";
+export type LandIdReviewStatus = "not_reviewed" | "in_review" | "manually_verified" | "mismatch_found";
+
+export interface NearbyPowerAsset {
+  id: string;
+  site_id?: string | null;
+  asset_type: "substation" | "transmission_line" | "tower" | "plant";
+  asset_name?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  geometry?: Record<string, unknown> | null;
+  distance_miles?: number | null;
+  voltage_kv?: number | null;
+  owner?: string | null;
+  operator?: string | null;
+  status?: string | null;
+  source_name: string;
+  source_url?: string | null;
+  confidence_level: string;
+  verification_status: string;
+  dataset_version?: string | null;
+  source_timestamp?: string | null;
+  checked_at: string;
+  raw_data_json: Record<string, unknown>;
+}
+
+export interface UtilityCandidate {
+  likely_utility?: string | null;
+  utility_type: string;
+  evidence?: string | null;
+  source_url?: string | null;
+  confidence_level: string;
+  status: string;
+}
+
+export interface PowerSourceRecord {
+  source_name: string;
+  source_url?: string | null;
+  source_type: string;
+  generated_query?: string | null;
+  confidence_level: string;
+  discovered_at: string;
+}
+
+export interface LandIdReview {
+  land_id_review_status: LandIdReviewStatus;
+  land_id_map_url?: string | null;
+  parcel_id?: string | null;
+  owner_name?: string | null;
+  owner_mailing_address?: string | null;
+  parcel_acres?: number | null;
+  nearest_substation_name?: string | null;
+  nearest_substation_distance?: number | null;
+  nearest_transmission_voltage?: number | null;
+  manual_notes?: string | null;
+  reviewed_at?: string | null;
+}
+
+export interface SitePowerAssessment {
+  site_id?: string | null;
+  address_status: PowerAddressStatus;
+  raw_address?: string | null;
+  standardized_address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  geocoding_source?: string | null;
+  geocoding_confidence: number;
+  nearest_substation?: NearbyPowerAsset | null;
+  nearest_transmission_line?: NearbyPowerAsset | null;
+  nearby_assets: NearbyPowerAsset[];
+  likely_utility: UtilityCandidate;
+  power_source_records: PowerSourceRecord[];
+  search_radius_counts: Record<string, number>;
+  known_voltage_kv?: number | null;
+  capacity_status: string;
+  assessment_warning: string;
+  confidence_level: string;
+  checked_at: string;
+  error_message?: string | null;
+}
 
 export interface ResultQualityStats {
   raw_results: number;
@@ -153,6 +233,9 @@ export interface SiteListing {
   country: string;
   latitude?: number | null;
   longitude?: number | null;
+  standardized_address?: string | null;
+  geocoding_source?: string | null;
+  geocoding_confidence: number;
   property_type?: string | null;
   zoning?: string | null;
   land_acres?: number | null;
@@ -182,6 +265,8 @@ export interface SiteListing {
   score_reasons: string[];
   warnings: string[];
   review_status?: string | null;
+  power_assessment?: SitePowerAssessment | null;
+  land_id_review: LandIdReview;
 }
 
 export interface SiteHunterJob {

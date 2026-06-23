@@ -110,5 +110,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/site-hunter/sites/SITE_ID/review \
 
 - Job data is stored in memory for V1 local testing. Restarting FastAPI clears jobs and results.
 - PostgreSQL/Supabase persistence is prepared in migrations but intentionally not required in this phase.
-- Utility capacity, GIS, substations, and transmission lines are reserved for the next stage.
+- Site Hunter V1.2 performs local power screening with geocoding and OpenStreetMap/Overpass power assets.
+- Power screening is only an early filter. It does not confirm available MW, interconnection rights, costs, or energization schedule.
+- Address-incomplete listings show `address_needs_verification` or `partial_address` and must not receive precise power distances.
 - Public search engines and websites can rate-limit, timeout, or change HTML. A single source failure is isolated and shown in source status.

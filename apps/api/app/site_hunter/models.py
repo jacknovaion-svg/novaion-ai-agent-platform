@@ -84,6 +84,28 @@ class PriceStatus(str, Enum):
     UNKNOWN = "unknown"
 
 
+class PowerAddressStatus(str, Enum):
+    VERIFIED_ADDRESS = "verified_address"
+    GEOCODED_ADDRESS = "geocoded_address"
+    PARTIAL_ADDRESS = "partial_address"
+    ADDRESS_NEEDS_VERIFICATION = "address_needs_verification"
+    GEOCODING_FAILED = "geocoding_failed"
+
+
+class PowerAssetType(str, Enum):
+    SUBSTATION = "substation"
+    TRANSMISSION_LINE = "transmission_line"
+    TOWER = "tower"
+    PLANT = "plant"
+
+
+class LandIdReviewStatus(str, Enum):
+    NOT_REVIEWED = "not_reviewed"
+    IN_REVIEW = "in_review"
+    MANUALLY_VERIFIED = "manually_verified"
+    MISMATCH_FOUND = "mismatch_found"
+
+
 class ResultQualityStats(BaseModel):
     raw_results: int = 0
     specific_listings: int = 0
@@ -95,6 +117,113 @@ class ResultQualityStats(BaseModel):
     size_mismatch_removed: int = 0
     budget_mismatch_removed: int = 0
     final_candidates: int = 0
+
+
+class GeocodingResult(BaseModel):
+    raw_address: str | None = None
+    standardized_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    county: str | None = None
+    state: str | None = None
+    zip_code: str | None = None
+    source_name: str | None = None
+    source_url: str | None = None
+    confidence: float = 0
+    status: PowerAddressStatus = PowerAddressStatus.ADDRESS_NEEDS_VERIFICATION
+    error_message: str | None = None
+    checked_at: datetime = Field(default_factory=utc_now)
+
+
+class NearbyPowerAsset(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    site_id: UUID | None = None
+    asset_type: PowerAssetType
+    asset_name: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geometry: dict[str, Any] | None = None
+    distance_miles: float | None = None
+    voltage_kv: float | None = None
+    owner: str | None = None
+    operator: str | None = None
+    status: str | None = None
+    source_name: str
+    source_url: str | None = None
+    confidence_level: TrustLevel = TrustLevel.ESTIMATED
+    verification_status: TrustLevel = TrustLevel.ESTIMATED
+    dataset_version: str | None = None
+    source_timestamp: datetime | None = None
+    checked_at: datetime = Field(default_factory=utc_now)
+    raw_data_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class UtilityCandidate(BaseModel):
+    likely_utility: str | None = None
+    utility_type: str = "unknown"
+    evidence: str | None = None
+    source_url: str | None = None
+    confidence_level: TrustLevel = TrustLevel.UNKNOWN
+    status: TrustLevel = TrustLevel.UNKNOWN
+
+
+class PowerSourceRecord(BaseModel):
+    source_name: str
+    source_url: str | None = None
+    source_type: str
+    generated_query: str | None = None
+    confidence_level: TrustLevel = TrustLevel.UNKNOWN
+    discovered_at: datetime = Field(default_factory=utc_now)
+
+
+class LandIdReview(BaseModel):
+    land_id_review_status: LandIdReviewStatus = LandIdReviewStatus.NOT_REVIEWED
+    land_id_map_url: str | None = None
+    parcel_id: str | None = None
+    owner_name: str | None = None
+    owner_mailing_address: str | None = None
+    parcel_acres: float | None = None
+    nearest_substation_name: str | None = None
+    nearest_substation_distance: float | None = None
+    nearest_transmission_voltage: float | None = None
+    manual_notes: str | None = None
+    reviewed_at: datetime | None = None
+
+
+class LandIdReviewRequest(BaseModel):
+    land_id_review_status: LandIdReviewStatus
+    land_id_map_url: str | None = None
+    parcel_id: str | None = None
+    owner_name: str | None = None
+    owner_mailing_address: str | None = None
+    parcel_acres: float | None = None
+    nearest_substation_name: str | None = None
+    nearest_substation_distance: float | None = None
+    nearest_transmission_voltage: float | None = None
+    manual_notes: str | None = None
+
+
+class SitePowerAssessment(BaseModel):
+    site_id: UUID | None = None
+    address_status: PowerAddressStatus = PowerAddressStatus.ADDRESS_NEEDS_VERIFICATION
+    raw_address: str | None = None
+    standardized_address: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+    geocoding_source: str | None = None
+    geocoding_confidence: float = 0
+    nearest_substation: NearbyPowerAsset | None = None
+    nearest_transmission_line: NearbyPowerAsset | None = None
+    nearby_assets: list[NearbyPowerAsset] = Field(default_factory=list)
+    likely_utility: UtilityCandidate = Field(default_factory=UtilityCandidate)
+    power_source_records: list[PowerSourceRecord] = Field(default_factory=list)
+    search_radius_counts: dict[str, int] = Field(default_factory=dict)
+    known_voltage_kv: float | None = None
+    capacity_status: str = "unknown"
+    assessment_warning: str = "周边电力设施分析仅用于项目初筛，不代表Utility容量、接入许可、接入成本或送电时间已经确认。"
+    confidence_level: TrustLevel = TrustLevel.UNKNOWN
+    checked_at: datetime = Field(default_factory=utc_now)
+    error_message: str | None = None
 
 
 class SiteHunterRegions(BaseModel):
@@ -200,6 +329,9 @@ class NormalizedSiteListing(BaseModel):
     country: str = "US"
     latitude: float | None = None
     longitude: float | None = None
+    standardized_address: str | None = None
+    geocoding_source: str | None = None
+    geocoding_confidence: float = 0
     property_type: str | None = None
     zoning: str | None = None
     land_acres: float | None = None
@@ -229,6 +361,8 @@ class NormalizedSiteListing(BaseModel):
     score_reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     review_status: SiteReviewStatus | None = None
+    power_assessment: SitePowerAssessment | None = None
+    land_id_review: LandIdReview = Field(default_factory=LandIdReview)
 
 
 class SiteHunterJob(BaseModel):

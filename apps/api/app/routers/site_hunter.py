@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException
 
 from app.site_hunter.job_service import site_hunter_jobs
-from app.site_hunter.models import NormalizedSiteListing, SiteHunterJob, SiteHunterSearchRequest, SiteReviewRequest
+from app.site_hunter.models import LandIdReview, LandIdReviewRequest, NormalizedSiteListing, SiteHunterJob, SiteHunterSearchRequest, SiteReviewRequest, utc_now
 from app.site_hunter.store import site_hunter_store
 
 router = APIRouter(prefix="/site-hunter", tags=["site-hunter"])
@@ -46,6 +46,15 @@ def get_site(site_id: UUID) -> NormalizedSiteListing:
 @router.post("/sites/{site_id}/review", response_model=NormalizedSiteListing)
 def review_site(site_id: UUID, payload: SiteReviewRequest) -> NormalizedSiteListing:
     site = site_hunter_store.review_site(site_id, payload)
+    if not site:
+        raise HTTPException(status_code=404, detail="Site not found")
+    return site
+
+
+@router.post("/sites/{site_id}/land-id-review", response_model=NormalizedSiteListing)
+def update_land_id_review(site_id: UUID, payload: LandIdReviewRequest) -> NormalizedSiteListing:
+    review = LandIdReview(**payload.model_dump(), reviewed_at=utc_now())
+    site = site_hunter_store.update_land_id_review(site_id, review)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
     return site

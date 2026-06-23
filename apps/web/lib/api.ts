@@ -117,3 +117,24 @@ export async function reviewSiteHunterSite(siteId: string, status: string) {
   if (!response.ok) throw new Error("Site review failed");
   return response.json();
 }
+
+export async function updateLandIdReview(siteId: string, payload: {
+  land_id_review_status: string;
+  land_id_map_url?: string | null;
+  parcel_id?: string | null;
+  owner_name?: string | null;
+  owner_mailing_address?: string | null;
+  parcel_acres?: number | null;
+  nearest_substation_name?: string | null;
+  nearest_substation_distance?: number | null;
+  nearest_transmission_voltage?: number | null;
+  manual_notes?: string | null;
+}) {
+  const response = await fetch(`${API_BASE}/site-hunter/sites/${siteId}/land-id-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Land id review save failed");
+  return response.json();
+}

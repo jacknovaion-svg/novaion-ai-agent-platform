@@ -416,6 +416,25 @@ th {
   background: #07101d;
 }
 
+.power-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.power-card {
+  align-content: start;
+}
+
+.power-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
 .danger-text {
   color: var(--danger);
 }
