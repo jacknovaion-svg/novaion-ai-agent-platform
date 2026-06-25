@@ -28,3 +28,8 @@ app.include_router(users.router, prefix="/api/v1")
 @app.get("/health")
 def health():
     return {"status": "ok", "service": settings.app_name}
+
+
+@app.on_event("startup")
+async def start_hardware_daily_scheduler() -> None:
+    hardware_daily.hardware_daily_scheduler.start_background_loop()

@@ -1,12 +1,13 @@
 "use client";
 
-import { Bell, ExternalLink, Loader2, Play, RefreshCw } from "lucide-react";
+import { Bell, ExternalLink, Loader2, Pause, Play, RefreshCw, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   createHardwareTelegramReport,
   getHardwareDailyScanJob,
   getHardwareDashboard,
   runHardwareDailyScan,
+  updateHardwareScheduler,
 } from "@/lib/api";
 import type { HardwareCategory, HardwareDashboard, HardwareScanJob } from "@novaion/shared/types";
 
@@ -25,6 +26,7 @@ export default function HardwareDashboardPage() {
   const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
+  const scheduler = dashboard?.scheduler;
 
   useEffect(() => {
     void refreshDashboard();
@@ -83,11 +85,54 @@ export default function HardwareDashboardPage() {
     if (!activeJobId) return;
     setBusy(true);
     try {
-      const generated = await createHardwareTelegramReport(activeJobId, false);
+      const generated = await createHardwareTelegramReport(activeJobId, "preview");
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob({ ...latest, report: generated });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendTelegramTest() {
+    if (!activeJobId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const generated = await createHardwareTelegramReport(activeJobId, "test", "NOVAION Hardware Hunter Telegram test message.");
+      const latest = await getHardwareDailyScanJob(activeJobId);
+      setJob({ ...latest, report: generated });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Telegram test failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approveAndSendReport() {
+    if (!activeJobId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const generated = await createHardwareTelegramReport(activeJobId, "approve_and_send");
+      const latest = await getHardwareDailyScanJob(activeJobId);
+      setJob({ ...latest, report: generated });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Telegram send failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setScheduler(action: "pause" | "resume") {
+    setBusy(true);
+    setError(null);
+    try {
+      await updateHardwareScheduler(action);
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Scheduler update failed");
     } finally {
       setBusy(false);
     }
@@ -147,7 +192,15 @@ export default function HardwareDashboardPage() {
             </button>
             <button className="button secondary" onClick={generateReport} disabled={busy || !activeJobId}>
               <Bell size={17} />
-              Generate Telegram Preview
+              Preview Daily Report
+            </button>
+            <button className="button secondary" onClick={sendTelegramTest} disabled={busy || !activeJobId}>
+              <Send size={17} />
+              Send Test Message
+            </button>
+            <button className="button gold" onClick={approveAndSendReport} disabled={busy || !activeJobId}>
+              <Send size={17} />
+              Approve and Send
             </button>
           </div>
         </section>
@@ -160,6 +213,20 @@ export default function HardwareDashboardPage() {
             <div className="agent-row"><span>Report hour</span><span className="pill">{dashboard?.daily_report_hour ?? 8}:00</span></div>
             <div className="agent-row"><span>Timezone</span><span className="pill">{dashboard?.timezone ?? "America/Los_Angeles"}</span></div>
             <div className="agent-row"><span>Immediate alerts</span><span className="pill">{dashboard?.immediate_alerts ? "enabled" : "disabled"}</span></div>
+            <div className="agent-row"><span>Scheduler</span><span className="pill">{scheduler?.status ?? "paused"}</span></div>
+            <div className="agent-row"><span>Running job</span><span className="pill">{scheduler?.is_job_running ? "yes" : "no"}</span></div>
+            <div className="agent-row"><span>Last run</span><span>{scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : "none"}</span></div>
+            <div className="agent-row"><span>Next run</span><span>{scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : "paused"}</span></div>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button className="button secondary" onClick={() => setScheduler("pause")} disabled={busy}>
+              <Pause size={16} />
+              Pause
+            </button>
+            <button className="button secondary" onClick={() => setScheduler("resume")} disabled={busy}>
+              <Play size={16} />
+              Resume
+            </button>
           </div>
           <p className="muted" style={{ marginTop: 14 }}>
             Telegram 默认关闭。配置 Bot Token 和 Chat ID 后，后端可以把同一份中文日报发送到 Telegram。
@@ -170,10 +237,13 @@ export default function HardwareDashboardPage() {
       <section className="metric-grid">
         <div className="metric"><span>Job Status</span><strong>{job?.status ?? dashboard?.latest_job?.status ?? "no job"}</strong></div>
         <div className="metric"><span>Raw Results</span><strong>{stats?.raw_results ?? 0}</strong></div>
+        <div className="metric"><span>Specific Listings</span><strong>{stats?.specific_listings ?? 0}</strong></div>
+        <div className="metric"><span>Collections</span><strong>{stats?.listing_collections ?? 0}</strong></div>
+        <div className="metric"><span>Source Pages</span><strong>{stats?.source_pages ?? 0}</strong></div>
         <div className="metric"><span>Final Opportunities</span><strong>{stats?.final_opportunities ?? dashboard?.active_opportunities ?? 0}</strong></div>
         <div className="metric"><span>Duplicates Removed</span><strong>{stats?.duplicates_removed ?? 0}</strong></div>
         <div className="metric"><span>New</span><strong>{stats?.new_opportunities ?? 0}</strong></div>
-        <div className="metric"><span>Price Changes</span><strong>{stats?.price_changes ?? 0}</strong></div>
+        <div className="metric"><span>Changed</span><strong>{stats?.changed_opportunities ?? 0}</strong></div>
       </section>
 
       <section className="panel">
@@ -225,8 +295,11 @@ export default function HardwareDashboardPage() {
                 <div className="agent-row"><span>Quantity</span><span>{item.quantity ?? "unknown"}</span></div>
                 <div className="agent-row"><span>Total Price</span><span>{item.total_price ? `$${item.total_price.toLocaleString()}` : "unknown"}</span></div>
                 <div className="agent-row"><span>Condition</span><span>{item.condition}</span></div>
+                <div className="agent-row"><span>Page Type</span><span>{item.page_type}</span></div>
                 <div className="agent-row"><span>Confidence</span><span>{item.confidence_level}</span></div>
+                <div className="agent-row"><span>Canonical URL</span><span className="muted">{item.canonical_url ?? "unknown"}</span></div>
               </div>
+              {item.classification_reason ? <p className="muted">{item.classification_reason}</p> : null}
               <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 {item.change_types.map((change) => <span className="pill" key={change}>{change}</span>)}
                 {item.risk_flags.map((flag) => <span className="pill" key={flag}>{flag}</span>)}
@@ -251,6 +324,13 @@ export default function HardwareDashboardPage() {
               <span className="pill">{report.delivery_log.status}</span>
             </div>
           ) : null}
+          {report?.delivery_log?.telegram_message_id ? (
+            <div className="agent-row">
+              <span>Message ID</span>
+              <span className="pill">{report.delivery_log.telegram_message_id}</span>
+            </div>
+          ) : null}
+          {report?.delivery_log?.error_message ? <p style={{ color: "var(--danger)" }}>{report.delivery_log.error_message}</p> : null}
         </aside>
       </section>
     </div>

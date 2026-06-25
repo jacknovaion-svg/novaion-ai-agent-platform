@@ -216,6 +216,7 @@ export type HardwareChangeType =
   | "AUCTION_ENDING"
   | "RELISTED"
   | "SUPPLIER_DISCOVERED";
+export type HardwareResultPageType = "specific_listing" | "listing_collection" | "source_page" | "news_or_article" | "irrelevant";
 
 export interface HardwareGeneratedQuery {
   id: string;
@@ -267,7 +268,10 @@ export interface HardwareOpportunity {
   seller_type: string;
   source: string;
   source_url: string;
+  canonical_url?: string | null;
   source_listing_id?: string | null;
+  page_type: HardwareResultPageType;
+  classification_reason?: string | null;
   first_seen_at: string;
   last_seen_at: string;
   last_changed_at?: string | null;
@@ -286,8 +290,14 @@ export interface HardwareOpportunity {
 export interface HardwareQualityStats {
   raw_results: number;
   normalized_listings: number;
+  specific_listings: number;
+  listing_collections: number;
+  source_pages: number;
+  news_or_articles: number;
+  irrelevant: number;
   duplicates_removed: number;
   new_opportunities: number;
+  changed_opportunities: number;
   price_changes: number;
   quantity_changes: number;
   status_changes: number;
@@ -303,9 +313,24 @@ export interface TelegramDeliveryLog {
   message_hash: string;
   status: "disabled" | "dry_run" | "sent" | "failed" | "duplicate_skipped";
   chat_id?: string | null;
+  telegram_message_id?: string | null;
   error_message?: string | null;
   sent_at?: string | null;
   created_at: string;
+}
+
+export interface HardwareSchedulerState {
+  status: "running" | "paused";
+  enabled: boolean;
+  is_job_running: boolean;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  current_job_id?: string | null;
+  last_job_id?: string | null;
+  last_error?: string | null;
+  daily_report_hour: number;
+  timezone: string;
+  restored_from_disk: boolean;
 }
 
 export interface HardwareDailyReport {
@@ -343,6 +368,7 @@ export interface HardwareDashboard {
   daily_report_hour: number;
   timezone: string;
   immediate_alerts: boolean;
+  scheduler: HardwareSchedulerState;
   top_opportunities: HardwareOpportunity[];
 }
 

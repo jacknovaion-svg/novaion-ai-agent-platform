@@ -9,6 +9,7 @@ import type {
   SupplierSearchJob,
   HardwareDashboard,
   HardwareDailyReport,
+  HardwareSchedulerState,
   HardwareScanJob,
 } from "@novaion/shared/types";
 
@@ -256,10 +257,28 @@ export async function getHardwareDashboard(): Promise<HardwareDashboard> {
   return response.json();
 }
 
-export async function createHardwareTelegramReport(jobId: string, send = false): Promise<HardwareDailyReport> {
-  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/jobs/${jobId}/telegram-report?send=${send}`, {
+export async function createHardwareTelegramReport(
+  jobId: string,
+  action: "preview" | "test" | "approve_and_send" = "preview",
+  message?: string,
+): Promise<HardwareDailyReport> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/jobs/${jobId}/telegram-report`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, message }),
   });
   if (!response.ok) throw new Error("Telegram report generation failed");
+  return response.json();
+}
+
+export async function getHardwareScheduler(): Promise<HardwareSchedulerState> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/scheduler`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Scheduler status failed");
+  return response.json();
+}
+
+export async function updateHardwareScheduler(action: "pause" | "resume"): Promise<HardwareSchedulerState> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/scheduler/${action}`, { method: "POST" });
+  if (!response.ok) throw new Error("Scheduler update failed");
   return response.json();
 }

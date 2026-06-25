@@ -16,11 +16,14 @@ V2 extends the existing Hardware Hunter. It does not create a separate project a
 - Manual hardware listing import
 - Hardware categories: servers, GPU, memory, storage, CPU
 - Hardware listing normalization
+- Result page classification: specific listing, listing collection, source page, news/article, irrelevant
+- Only `specific_listing` enters formal opportunities and Telegram reports
 - Deduplication by canonical URL
 - Change detection: new, price, quantity, status
 - Opportunity score and risk score
-- Chinese Telegram daily report generation
+- Chinese Telegram daily report preview, test send, approve-and-send
 - Telegram delivery log model
+- 24-hour scheduler state: pause/resume, last run, next run, overlap prevention, local disk restore
 - Local Dashboard page
 - Supabase/PostgreSQL migration for the V2 tables
 
@@ -50,7 +53,10 @@ With Telegram disabled or missing token/chat id, the API returns a local report 
 - `POST /api/v1/hardware-hunter/daily-scan/run`
 - `GET /api/v1/hardware-hunter/daily-scan/jobs/{job_id}`
 - `GET /api/v1/hardware-hunter/daily-scan/dashboard`
-- `POST /api/v1/hardware-hunter/daily-scan/jobs/{job_id}/telegram-report?send=false`
+- `POST /api/v1/hardware-hunter/daily-scan/jobs/{job_id}/telegram-report`
+- `GET /api/v1/hardware-hunter/daily-scan/scheduler`
+- `POST /api/v1/hardware-hunter/daily-scan/scheduler/pause`
+- `POST /api/v1/hardware-hunter/daily-scan/scheduler/resume`
 
 Example payload:
 
@@ -65,6 +71,22 @@ Example payload:
   "send_telegram": false
 }
 ```
+
+Telegram actions:
+
+```json
+{ "action": "preview" }
+```
+
+```json
+{ "action": "test", "message": "NOVAION Hardware Hunter Telegram test message." }
+```
+
+```json
+{ "action": "approve_and_send" }
+```
+
+`preview` never sends. `test` and `approve_and_send` require Telegram token and chat id. Same `scan_job_id + report_type + message_hash` cannot be sent twice after a successful Telegram send.
 
 ## Planned Dedicated Adapters
 

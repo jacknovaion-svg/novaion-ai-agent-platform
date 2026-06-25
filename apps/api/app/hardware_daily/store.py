@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from uuid import UUID
 
 from app.hardware_daily.models import (
     HardwareChangeType,
     HardwareOpportunity,
     HardwarePriceHistoryRecord,
+    HardwareSchedulerState,
     HardwareScanJob,
     TelegramDeliveryLog,
     utc_now,
@@ -18,6 +21,8 @@ class HardwareDailyMemoryStore:
         self.opportunities_by_key: dict[str, HardwareOpportunity] = {}
         self.price_history: list[HardwarePriceHistoryRecord] = []
         self.telegram_logs: list[TelegramDeliveryLog] = []
+        self.scheduler_state_path = Path(__file__).resolve().parents[2] / "data" / "hardware_scheduler_state.json"
+        self.scheduler_state = self._load_scheduler_state()
 
     def create_job(self, job: HardwareScanJob) -> HardwareScanJob:
         self.jobs[job.id] = job
@@ -64,9 +69,18 @@ class HardwareDailyMemoryStore:
 
     def has_telegram_message(self, scan_job_id: UUID, report_type: str, message_hash: str) -> bool:
         return any(
-            log.scan_job_id == scan_job_id and log.report_type == report_type and log.message_hash == message_hash
+            log.scan_job_id == scan_job_id
+            and log.report_type == report_type
+            and log.message_hash == message_hash
+            and log.status.value == "sent"
             for log in self.telegram_logs
         )
+
+    def save_scheduler_state(self, state: HardwareSchedulerState) -> HardwareSchedulerState:
+        self.scheduler_state = state
+        self.scheduler_state_path.parent.mkdir(parents=True, exist_ok=True)
+        self.scheduler_state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        return state
 
     def _record_history(self, key: str, opportunity: HardwareOpportunity) -> None:
         self.price_history.append(
@@ -79,6 +93,17 @@ class HardwareDailyMemoryStore:
                 status=opportunity.status.value,
             )
         )
+
+    def _load_scheduler_state(self) -> HardwareSchedulerState:
+        if not self.scheduler_state_path.exists():
+            return HardwareSchedulerState()
+        try:
+            payload = json.loads(self.scheduler_state_path.read_text(encoding="utf-8"))
+            state = HardwareSchedulerState.model_validate(payload)
+            state.restored_from_disk = True
+            return state
+        except Exception:
+            return HardwareSchedulerState(last_error="Failed to restore scheduler state from disk.")
 
 
 hardware_daily_store = HardwareDailyMemoryStore()

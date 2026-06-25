@@ -83,6 +83,14 @@ class HardwareChangeType(str, Enum):
     SUPPLIER_DISCOVERED = "SUPPLIER_DISCOVERED"
 
 
+class HardwareResultPageType(str, Enum):
+    SPECIFIC_LISTING = "specific_listing"
+    LISTING_COLLECTION = "listing_collection"
+    SOURCE_PAGE = "source_page"
+    NEWS_OR_ARTICLE = "news_or_article"
+    IRRELEVANT = "irrelevant"
+
+
 class HardwareScanRequest(BaseModel):
     mode: HardwareScanMode = HardwareScanMode.BOTH
     categories: list[HardwareCategory] = Field(default_factory=list)
@@ -125,6 +133,8 @@ class RawHardwareListing(BaseModel):
     category: HardwareCategory
     source_listing_id: str | None = None
     seller_name: str | None = None
+    page_type: HardwareResultPageType = HardwareResultPageType.IRRELEVANT
+    classification_reason: str | None = None
     raw_data: dict[str, Any] = Field(default_factory=dict)
     fetched_at: datetime = Field(default_factory=utc_now)
 
@@ -157,7 +167,10 @@ class HardwareOpportunity(BaseModel):
     seller_type: str = "unknown"
     source: str
     source_url: str
+    canonical_url: str | None = None
     source_listing_id: str | None = None
+    page_type: HardwareResultPageType = HardwareResultPageType.SPECIFIC_LISTING
+    classification_reason: str | None = None
     first_seen_at: datetime = Field(default_factory=utc_now)
     last_seen_at: datetime = Field(default_factory=utc_now)
     last_changed_at: datetime | None = None
@@ -187,8 +200,14 @@ class HardwarePriceHistoryRecord(BaseModel):
 class HardwareQualityStats(BaseModel):
     raw_results: int = 0
     normalized_listings: int = 0
+    specific_listings: int = 0
+    listing_collections: int = 0
+    source_pages: int = 0
+    news_or_articles: int = 0
+    irrelevant: int = 0
     duplicates_removed: int = 0
     new_opportunities: int = 0
+    changed_opportunities: int = 0
     price_changes: int = 0
     quantity_changes: int = 0
     status_changes: int = 0
@@ -212,6 +231,7 @@ class TelegramDeliveryLog(BaseModel):
     message_hash: str
     status: TelegramDeliveryStatus
     chat_id: str | None = None
+    telegram_message_id: str | None = None
     error_message: str | None = None
     sent_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
@@ -224,6 +244,36 @@ class HardwareDailyReport(BaseModel):
     message_zh: str
     generated_at: datetime = Field(default_factory=utc_now)
     delivery_log: TelegramDeliveryLog | None = None
+
+
+class TelegramReportAction(str, Enum):
+    PREVIEW = "preview"
+    TEST = "test"
+    APPROVE_AND_SEND = "approve_and_send"
+
+
+class TelegramReportRequest(BaseModel):
+    action: TelegramReportAction = TelegramReportAction.PREVIEW
+    message: str | None = None
+
+
+class SchedulerStatus(str, Enum):
+    RUNNING = "running"
+    PAUSED = "paused"
+
+
+class HardwareSchedulerState(BaseModel):
+    status: SchedulerStatus = SchedulerStatus.PAUSED
+    enabled: bool = False
+    is_job_running: bool = False
+    last_run_at: datetime | None = None
+    next_run_at: datetime | None = None
+    current_job_id: UUID | None = None
+    last_job_id: UUID | None = None
+    last_error: str | None = None
+    daily_report_hour: int = 8
+    timezone: str = "America/Los_Angeles"
+    restored_from_disk: bool = False
 
 
 class HardwareScanJob(BaseModel):
@@ -252,5 +302,5 @@ class HardwareDashboard(BaseModel):
     daily_report_hour: int
     timezone: str
     immediate_alerts: bool
+    scheduler: HardwareSchedulerState
     top_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
-

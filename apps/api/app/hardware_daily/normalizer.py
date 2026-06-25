@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from app.hardware_daily.models import (
     ConfidenceLevel,
@@ -26,6 +26,7 @@ class HardwareListingNormalizer:
         source_listing_id = raw.source_listing_id or self._listing_id_from_url(raw.source_url)
         confidence = self._confidence(raw.source_name, raw.raw_data.get("domain"))
         risk_flags = self._risk_flags(lower, raw.source_url)
+        canonical_url = self.canonical_url(raw.source_url)
         return HardwareOpportunity(
             category=raw.category,
             subcategory=self._subcategory(raw.category, lower),
@@ -50,7 +51,10 @@ class HardwareListingNormalizer:
             seller_type=self._seller_type(lower, raw.source_name),
             source=raw.source_name,
             source_url=raw.source_url,
+            canonical_url=canonical_url,
             source_listing_id=source_listing_id,
+            page_type=raw.page_type,
+            classification_reason=raw.classification_reason,
             status=OpportunityStatus.ACTIVE if "ended" not in lower and "sold" not in lower else OpportunityStatus.ENDED,
             confidence_level=confidence,
             risk_flags=risk_flags,
@@ -60,12 +64,31 @@ class HardwareListingNormalizer:
         )
 
     def opportunity_key(self, opportunity: HardwareOpportunity) -> str:
-        parsed = urlparse(opportunity.source_url)
+        canonical_url = opportunity.canonical_url or self.canonical_url(opportunity.source_url)
+        parsed = urlparse(canonical_url)
         canonical = f"{parsed.netloc.lower().removeprefix('www.')}{parsed.path.rstrip('/')}"
+        if parsed.query:
+            canonical = f"{canonical}?{parsed.query}"
         if canonical:
             return canonical
         parts = [opportunity.seller_name or "", opportunity.title, opportunity.model or "", opportunity.location_state or ""]
         return "|".join(part.lower().strip() for part in parts if part)
+
+    def canonical_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower().removeprefix("www.")
+        path = parsed.path.rstrip("/")
+        query = parse_qs(parsed.query)
+        keep_params: dict[str, str] = {}
+        for param in ["auc", "auction", "lot", "item", "asset", "id", "hash"]:
+            if query.get(param):
+                keep_params[param] = query[param][0]
+        if "ebay.com" in domain and "/itm/" in path:
+            match = re.search(r"/itm/(?:[^/]+/)?(\d{10,})", path)
+            if match:
+                path = f"/itm/{match.group(1)}"
+        normalized_query = urlencode(keep_params)
+        return urlunparse((parsed.scheme or "https", domain, path or "/", "", normalized_query, ""))
 
     def _extract_manufacturer_model(self, text: str, category: HardwareCategory) -> tuple[str | None, str | None]:
         patterns = [
@@ -186,8 +209,18 @@ class HardwareListingNormalizer:
             flags.append("parts_or_salvage")
         if "pickup only" in lower:
             flags.append("pickup_only")
+        if "buyer premium" in lower or "buyers premium" in lower:
+            flags.append("buyer_premium")
         if "bid" in lower or "auction" in lower:
             flags.append("auction_timing")
+        if any(token in lower for token in ["no cpu", "missing cpu", "without cpu"]):
+            flags.append("missing_cpu")
+        if any(token in lower for token in ["no ram", "no memory", "missing memory", "without memory"]):
+            flags.append("missing_memory")
+        if any(token in lower for token in ["no hard drive", "no hdd", "no ssd", "drives removed", "without drives"]):
+            flags.append("missing_storage")
+        if any(token in lower for token in ["no power supply", "missing power supply", "without psu"]):
+            flags.append("missing_power_supply")
         if url.startswith("manual://"):
             flags.append("manual_unverified")
         return flags
