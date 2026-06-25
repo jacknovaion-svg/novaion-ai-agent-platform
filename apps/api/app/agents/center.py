@@ -49,8 +49,8 @@ class AgentCenter:
                 id="supplier-hunter",
                 name="Supplier Hunter",
                 type=AgentType.SUPPLIER_HUNTER,
-                enabled=False,
-                description="Reserved agent for supplier discovery and qualification.",
+                enabled=True,
+                description="Discover ITAD, data center decommissioning, used enterprise hardware, and asset remarketing suppliers.",
             ),
             AgentInfo(
                 id="data-center-hunter",

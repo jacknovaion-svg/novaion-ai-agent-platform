@@ -9,6 +9,8 @@ export type SearchSource =
   | "cdw"
   | "provantage";
 
+export type HardwareSearchMode = "retail_products" | "used_enterprise_hardware" | "supplier_discovery";
+
 export interface SearchResult {
   source: string;
   product_name: string;
@@ -38,6 +40,156 @@ export interface SearchJob {
   status: string;
   created_at: string;
   results: SearchResult[];
+}
+
+export type SupplierJobStatus =
+  | "created"
+  | "parsing_requirements"
+  | "generating_queries"
+  | "searching_suppliers"
+  | "normalizing_results"
+  | "scoring"
+  | "completed"
+  | "partially_completed"
+  | "failed";
+
+export type SupplierCategory = "A" | "B" | "C" | "D";
+export type SupplierVerificationStatus =
+  | "verified"
+  | "claimed_on_website"
+  | "directory_discovered"
+  | "needs_verification"
+  | "unknown";
+export type SupplierReviewStatus = "new" | "kept" | "rejected" | "contact" | "investigate";
+export type SupplierSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked";
+
+export interface SupplierSearchRegions {
+  states: string[];
+  state_codes: string[];
+  cities: string[];
+  zip_codes: string[];
+  radius_miles?: number | null;
+}
+
+export interface SupplierSearchCriteria {
+  regions: SupplierSearchRegions;
+  supplier_types: string[];
+  equipment_types: string[];
+  certifications: string[];
+  data_center_decommissioning?: boolean | null;
+  bulk_sales?: boolean | null;
+  wholesale?: boolean | null;
+  direct_asset_purchasing?: boolean | null;
+  raw_user_query_zh?: string | null;
+  parsed_summary_zh?: string | null;
+}
+
+export interface SupplierGeneratedQuery {
+  id: string;
+  generated_query_en: string;
+  source_group: string;
+  state?: string | null;
+  state_code?: string | null;
+  city?: string | null;
+  region_name?: string | null;
+  supplier_type?: string | null;
+  result_count: number;
+  status: SupplierSourceRunStatus;
+}
+
+export interface SupplierRegionSubJob {
+  id: string;
+  state_code: string;
+  state_name: string;
+  region_name: string;
+  cities: string[];
+  generated_query_count: number;
+  executed_query_count: number;
+  raw_result_count: number;
+  supplier_count: number;
+  high_value_count: number;
+  status: SupplierSourceRunStatus;
+}
+
+export interface SupplierSourceRun {
+  id: string;
+  source_name: string;
+  adapter_type: string;
+  query?: string | null;
+  status: SupplierSourceRunStatus;
+  result_count: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface SupplierResult {
+  supplier_id: string;
+  company_name: string;
+  company_type?: string | null;
+  supplier_category: SupplierCategory;
+  website?: string | null;
+  address?: string | null;
+  city?: string | null;
+  county?: string | null;
+  state?: string | null;
+  zip_code?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  contact_name?: string | null;
+  service_area?: string | null;
+  r2_certified: SupplierVerificationStatus;
+  e_stewards_certified: SupplierVerificationStatus;
+  naid_aaa_certified: SupplierVerificationStatus;
+  data_center_decommissioning: boolean;
+  enterprise_itad: boolean;
+  asset_remarketing: boolean;
+  direct_asset_purchasing: boolean;
+  server_recycling: boolean;
+  computer_refurbishing: boolean;
+  bulk_sales: boolean;
+  wholesale: boolean;
+  equipment_types: string[];
+  minimum_order?: string | null;
+  pickup_available?: boolean | null;
+  shipping_available?: boolean | null;
+  source_name: string;
+  source_url: string;
+  last_checked_at: string;
+  confidence_level: SupplierVerificationStatus;
+  review_status: SupplierReviewStatus;
+  notes?: string | null;
+  supplier_score: number;
+  score_reasons: string[];
+  quality_flags: string[];
+  raw_data_json: Record<string, unknown>;
+}
+
+export interface SupplierQualityStats {
+  raw_results: number;
+  normalized_suppliers: number;
+  duplicates_removed: number;
+  low_value_filtered: number;
+  final_suppliers: number;
+  high_value_suppliers: number;
+}
+
+export interface SupplierSearchJob {
+  id: string;
+  status: SupplierJobStatus;
+  natural_language_query_zh?: string | null;
+  parsed_criteria?: SupplierSearchCriteria | null;
+  state_job?: Record<string, unknown> | null;
+  region_subjobs: SupplierRegionSubJob[];
+  generated_queries: SupplierGeneratedQuery[];
+  source_runs: SupplierSourceRun[];
+  results: SupplierResult[];
+  rejected_low_value_results: SupplierResult[];
+  quality_stats: SupplierQualityStats;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
 }
 
 export type SiteHunterJobStatus =

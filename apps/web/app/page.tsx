@@ -11,8 +11,8 @@ export default function HomePage() {
         <div className="section-label">V1 Scope</div>
         <h2 style={{ marginTop: 10 }}>AI procurement search</h2>
         <p className="muted">
-          Search hardware across source adapters, normalize inventory and pricing, then rank results by stock,
-          price, distance, and promotion.
+          Search retail hardware, used enterprise hardware, and supplier discovery sources from one Hardware
+          Hunter workspace.
         </p>
         <div className="agent-list" style={{ marginTop: 16 }}>
           <div className="agent-row">
@@ -26,6 +26,10 @@ export default function HomePage() {
           <div className="agent-row">
             <span>CDW / Micro Center / Provantage</span>
             <span className="pill">Ready</span>
+          </div>
+          <div className="agent-row">
+            <span>Supplier Discovery</span>
+            <span className="pill">V1.5</span>
           </div>
         </div>
       </aside>

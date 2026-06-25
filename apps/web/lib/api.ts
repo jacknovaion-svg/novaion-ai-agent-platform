@@ -1,4 +1,13 @@
-import type { SearchJob, SearchMode, SearchResult, SearchSource, SiteHunterJob, SiteListing, SiteSearchAnchor } from "@novaion/shared/types";
+import type {
+  SearchJob,
+  SearchMode,
+  SearchResult,
+  SearchSource,
+  SiteHunterJob,
+  SiteListing,
+  SiteSearchAnchor,
+  SupplierSearchJob,
+} from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -158,5 +167,54 @@ export async function updateDataTruthVerification(siteId: string, payload: {
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error("Data truth verification save failed");
+  return response.json();
+}
+
+export type SupplierHunterPayload = {
+  natural_language_query_zh?: string;
+  structured_criteria?: {
+    regions: {
+      states: string[];
+      state_codes: string[];
+      cities: string[];
+      zip_codes: string[];
+      radius_miles?: number | null;
+    };
+    supplier_types: string[];
+    equipment_types: string[];
+    certifications: string[];
+    data_center_decommissioning?: boolean | null;
+    bulk_sales?: boolean | null;
+    wholesale?: boolean | null;
+    direct_asset_purchasing?: boolean | null;
+  };
+  manual_urls?: string[];
+  manual_text?: string | null;
+  max_results_per_source?: number;
+};
+
+export async function createSupplierHunterJob(payload: SupplierHunterPayload): Promise<SupplierSearchJob> {
+  const response = await fetch(`${API_BASE}/supplier-hunter/search-jobs`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Supplier Hunter search failed");
+  return response.json();
+}
+
+export async function getSupplierHunterJob(jobId: string): Promise<SupplierSearchJob> {
+  const response = await fetch(`${API_BASE}/supplier-hunter/search-jobs/${jobId}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Supplier Hunter job not found");
+  return response.json();
+}
+
+export async function reviewSupplier(supplierId: string, status: string, notes?: string | null) {
+  const response = await fetch(`${API_BASE}/supplier-hunter/suppliers/${supplierId}/review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, notes }),
+  });
+  if (!response.ok) throw new Error("Supplier review failed");
   return response.json();
 }

@@ -20,7 +20,7 @@ const agents = [
   { label: "siteHunter", icon: Building2, active: true },
   { label: "powerHunter", icon: Zap, active: false },
   { label: "landHunter", icon: LandPlot, active: false },
-  { label: "supplierHunter", icon: Factory, active: false },
+  { label: "supplierHunter", icon: Factory, active: true },
   { label: "dataCenterHunter", icon: Database, active: false },
 ];
 
@@ -67,9 +67,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       <main className="main">
         <header className="topbar">
           <div>
-            <strong>{path.startsWith("/site-hunter") ? t("siteHunter") : t("hardwareHunter")}</strong>
+            <strong>{path.startsWith("/site-hunter") ? t("siteHunter") : path.startsWith("/supplier-hunter") ? t("supplierHunter") : t("hardwareHunter")}</strong>
             <div className="muted">
-              {path.startsWith("/site-hunter") ? "Industrial site discovery agent" : "AI procurement search agent"}
+              {path.startsWith("/site-hunter")
+                ? "Industrial site discovery agent"
+                : path.startsWith("/supplier-hunter")
+                  ? "ITAD and enterprise hardware supplier discovery"
+                  : "AI procurement search agent"}
             </div>
           </div>
           <label className="field" style={{ minWidth: 150 }}>
