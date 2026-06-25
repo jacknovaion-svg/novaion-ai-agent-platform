@@ -15,6 +15,10 @@ export default function HomePage() {
           Hunter workspace.
         </p>
         <div className="agent-list" style={{ marginTop: 16 }}>
+          <a className="agent-row" href="/hardware-hunter/dashboard">
+            <span>Daily retired IT asset scan</span>
+            <span className="pill">V2</span>
+          </a>
           <div className="agent-row">
             <span>Best Buy Adapter</span>
             <span className="pill">Playwright</span>

@@ -192,6 +192,160 @@ export interface SupplierSearchJob {
   completed_at?: string | null;
 }
 
+export type HardwareScanJobStatus = "created" | "running" | "partially_completed" | "completed" | "failed";
+export type HardwareSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
+export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
+export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu";
+export type HardwareCondition =
+  | "new"
+  | "open_box"
+  | "used_working"
+  | "refurbished"
+  | "tested"
+  | "untested"
+  | "customer_return"
+  | "salvage"
+  | "parts_only"
+  | "broken"
+  | "unknown";
+export type HardwareChangeType =
+  | "NEW"
+  | "PRICE_CHANGED"
+  | "QUANTITY_CHANGED"
+  | "STATUS_CHANGED"
+  | "AUCTION_ENDING"
+  | "RELISTED"
+  | "SUPPLIER_DISCOVERED";
+
+export interface HardwareGeneratedQuery {
+  id: string;
+  category: HardwareCategory;
+  source_group: string;
+  generated_query_en: string;
+  status: HardwareSourceRunStatus;
+  result_count: number;
+}
+
+export interface HardwareSourceRun {
+  id: string;
+  source_name: string;
+  adapter_type: string;
+  query?: string | null;
+  category?: HardwareCategory | null;
+  status: HardwareSourceRunStatus;
+  result_count: number;
+  started_at?: string | null;
+  completed_at?: string | null;
+  error_message?: string | null;
+}
+
+export interface HardwareOpportunity {
+  opportunity_id: string;
+  category: HardwareCategory;
+  subcategory?: string | null;
+  title: string;
+  manufacturer?: string | null;
+  model?: string | null;
+  part_number?: string | null;
+  generation?: string | null;
+  configuration?: string | null;
+  quantity?: number | null;
+  quantity_status: string;
+  unit_price?: number | null;
+  total_price?: number | null;
+  condition: HardwareCondition;
+  working_status: string;
+  testing_status: string;
+  warranty_status: string;
+  location_city?: string | null;
+  location_state?: string | null;
+  zip_code?: string | null;
+  pickup_only?: boolean | null;
+  shipping_available?: boolean | null;
+  auction_end_time?: string | null;
+  seller_name?: string | null;
+  seller_type: string;
+  source: string;
+  source_url: string;
+  source_listing_id?: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  last_changed_at?: string | null;
+  status: string;
+  confidence_level: string;
+  risk_flags: string[];
+  change_types: HardwareChangeType[];
+  opportunity_score: number;
+  risk_score: number;
+  score_reasons: string[];
+  raw_title: string;
+  raw_description?: string | null;
+  raw_data_json: Record<string, unknown>;
+}
+
+export interface HardwareQualityStats {
+  raw_results: number;
+  normalized_listings: number;
+  duplicates_removed: number;
+  new_opportunities: number;
+  price_changes: number;
+  quantity_changes: number;
+  status_changes: number;
+  final_opportunities: number;
+  high_score_opportunities: number;
+  failed_sources: number;
+}
+
+export interface TelegramDeliveryLog {
+  id: string;
+  scan_job_id: string;
+  report_type: string;
+  message_hash: string;
+  status: "disabled" | "dry_run" | "sent" | "failed" | "duplicate_skipped";
+  chat_id?: string | null;
+  error_message?: string | null;
+  sent_at?: string | null;
+  created_at: string;
+}
+
+export interface HardwareDailyReport {
+  scan_job_id: string;
+  report_type: string;
+  title: string;
+  message_zh: string;
+  generated_at: string;
+  delivery_log?: TelegramDeliveryLog | null;
+}
+
+export interface HardwareScanJob {
+  id: string;
+  mode: HardwareScanMode;
+  status: HardwareScanJobStatus;
+  categories: HardwareCategory[];
+  states: string[];
+  generated_queries: HardwareGeneratedQuery[];
+  source_runs: HardwareSourceRun[];
+  opportunities: HardwareOpportunity[];
+  quality_stats: HardwareQualityStats;
+  report?: HardwareDailyReport | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+}
+
+export interface HardwareDashboard {
+  total_jobs: number;
+  total_opportunities_seen: number;
+  active_opportunities: number;
+  latest_job?: HardwareScanJob | null;
+  telegram_enabled: boolean;
+  daily_report_hour: number;
+  timezone: string;
+  immediate_alerts: boolean;
+  top_opportunities: HardwareOpportunity[];
+}
+
 export type SiteHunterJobStatus =
   | "created"
   | "parsing_requirements"

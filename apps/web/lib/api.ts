@@ -7,6 +7,9 @@ import type {
   SiteListing,
   SiteSearchAnchor,
   SupplierSearchJob,
+  HardwareDashboard,
+  HardwareDailyReport,
+  HardwareScanJob,
 } from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -216,5 +219,47 @@ export async function reviewSupplier(supplierId: string, status: string, notes?:
     body: JSON.stringify({ status, notes }),
   });
   if (!response.ok) throw new Error("Supplier review failed");
+  return response.json();
+}
+
+export type HardwareDailyScanPayload = {
+  mode: "asset_listing_search" | "supplier_lead_search" | "both";
+  categories: Array<"servers" | "gpu" | "memory" | "storage" | "cpu">;
+  states: string[];
+  test_run: boolean;
+  max_results_per_query: number;
+  max_queries_per_category: number;
+  send_telegram: boolean;
+  manual_urls?: string[];
+  manual_text?: string | null;
+};
+
+export async function runHardwareDailyScan(payload: HardwareDailyScanPayload): Promise<HardwareScanJob> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/run`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Hardware daily scan failed");
+  return response.json();
+}
+
+export async function getHardwareDailyScanJob(jobId: string): Promise<HardwareScanJob> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/jobs/${jobId}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Hardware daily scan job not found");
+  return response.json();
+}
+
+export async function getHardwareDashboard(): Promise<HardwareDashboard> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/dashboard`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Hardware dashboard failed");
+  return response.json();
+}
+
+export async function createHardwareTelegramReport(jobId: string, send = false): Promise<HardwareDailyReport> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/jobs/${jobId}/telegram-report?send=${send}`, {
+    method: "POST",
+  });
+  if (!response.ok) throw new Error("Telegram report generation failed");
   return response.json();
 }

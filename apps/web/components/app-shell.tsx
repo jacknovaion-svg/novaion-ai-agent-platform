@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Bookmark, Building2, Cpu, Database, Factory, LandPlot, Search, Zap } from "lucide-react";
+import { Bell, Bookmark, Building2, Cpu, Database, Factory, LandPlot, Radar, Search, Zap } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -9,6 +9,7 @@ import type { Language } from "@novaion/shared/types";
 
 const nav = [
   { href: "/", label: "search", icon: Search },
+  { href: "/hardware-hunter/dashboard", label: "Hardware V2", icon: Radar },
   { href: "/site-hunter", label: "siteHunter", icon: Building2 },
   { href: "/results", label: "results", icon: Database },
   { href: "/saved-searches", label: "savedSearches", icon: Bookmark },
@@ -73,6 +74,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 ? "Industrial site discovery agent"
                 : path.startsWith("/supplier-hunter")
                   ? "ITAD and enterprise hardware supplier discovery"
+                  : path.startsWith("/hardware-hunter/dashboard")
+                    ? "Daily retired IT asset discovery and Telegram reporting"
                   : "AI procurement search agent"}
             </div>
           </div>

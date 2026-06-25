@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     overpass_api_url: str = "https://overpass-api.de/api/interpreter"
     power_asset_search_radii_miles: str = "1,3,5,10"
     transmission_line_geojson_path: str | None = None
+    hardware_hunter_telegram_enabled: bool = False
+    hardware_hunter_telegram_bot_token: str | None = None
+    hardware_hunter_telegram_chat_id: str | None = None
+    hardware_hunter_daily_report_hour: int = 8
+    hardware_hunter_timezone: str = "America/Los_Angeles"
+    hardware_hunter_immediate_alerts: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
