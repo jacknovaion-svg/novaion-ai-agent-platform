@@ -248,12 +248,24 @@ export interface HardwareOpportunity {
   manufacturer?: string | null;
   model?: string | null;
   part_number?: string | null;
+  lot_number?: string | null;
   generation?: string | null;
   configuration?: string | null;
   quantity?: number | null;
   quantity_status: string;
   unit_price?: number | null;
   total_price?: number | null;
+  current_price?: number | null;
+  current_total_cost?: number | null;
+  buyer_premium?: string | null;
+  buyer_premium_amount?: number | null;
+  estimated_tax?: number | null;
+  estimated_shipping?: number | null;
+  estimated_landed_cost?: number | null;
+  cost_per_unit?: number | null;
+  cost_per_gb?: number | null;
+  cost_confidence: string;
+  bid_count?: number | null;
   condition: HardwareCondition;
   working_status: string;
   testing_status: string;
@@ -264,6 +276,15 @@ export interface HardwareOpportunity {
   pickup_only?: boolean | null;
   shipping_available?: boolean | null;
   auction_end_time?: string | null;
+  time_remaining?: string | null;
+  listing_status:
+    | "active"
+    | "ending_soon"
+    | "ended"
+    | "sold"
+    | "removed"
+    | "unavailable"
+    | "unknown";
   seller_name?: string | null;
   seller_type: string;
   source: string;
@@ -276,6 +297,28 @@ export interface HardwareOpportunity {
   last_seen_at: string;
   last_changed_at?: string | null;
   status: string;
+  component_completeness:
+    | "complete"
+    | "mostly_complete"
+    | "missing_storage"
+    | "missing_memory"
+    | "missing_cpu"
+    | "missing_psu"
+    | "barebone"
+    | "mixed_lot"
+    | "unknown";
+  component_details: Record<string, unknown>;
+  recommendation:
+    | "urgent_review"
+    | "worth_tracking"
+    | "information_incomplete"
+    | "high_risk"
+    | "ignore"
+    | "expired";
+  recommendation_reasons: string[];
+  last_checked_at?: string | null;
+  unavailable_reason?: string | null;
+  needs_manual_review: boolean;
   confidence_level: string;
   risk_flags: string[];
   change_types: HardwareChangeType[];
@@ -302,6 +345,11 @@ export interface HardwareQualityStats {
   quantity_changes: number;
   status_changes: number;
   final_opportunities: number;
+  active_opportunities: number;
+  ending_soon: number;
+  expired_removed: number;
+  unavailable_links: number;
+  needs_manual_review: number;
   high_score_opportunities: number;
   failed_sources: number;
 }
@@ -369,6 +417,8 @@ export interface HardwareDashboard {
   timezone: string;
   immediate_alerts: boolean;
   scheduler: HardwareSchedulerState;
+  persistence_mode: string;
+  persistence_warning?: string | null;
   top_opportunities: HardwareOpportunity[];
 }
 

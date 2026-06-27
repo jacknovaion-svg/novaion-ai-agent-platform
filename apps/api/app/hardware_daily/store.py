@@ -55,7 +55,7 @@ class HardwareDailyMemoryStore:
             changes.append(HardwareChangeType.PRICE_CHANGED)
         if current.quantity != previous.quantity:
             changes.append(HardwareChangeType.QUANTITY_CHANGED)
-        if current.status != previous.status:
+        if current.status != previous.status or current.listing_status != previous.listing_status:
             changes.append(HardwareChangeType.STATUS_CHANGED)
         if changes:
             current.last_changed_at = utc_now()

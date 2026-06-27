@@ -65,6 +65,37 @@ class OpportunityStatus(str, Enum):
     NEEDS_VERIFICATION = "needs_verification"
 
 
+class ListingStatus(str, Enum):
+    ACTIVE = "active"
+    ENDING_SOON = "ending_soon"
+    ENDED = "ended"
+    SOLD = "sold"
+    REMOVED = "removed"
+    UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+
+
+class ComponentCompleteness(str, Enum):
+    COMPLETE = "complete"
+    MOSTLY_COMPLETE = "mostly_complete"
+    MISSING_STORAGE = "missing_storage"
+    MISSING_MEMORY = "missing_memory"
+    MISSING_CPU = "missing_cpu"
+    MISSING_PSU = "missing_psu"
+    BAREBONE = "barebone"
+    MIXED_LOT = "mixed_lot"
+    UNKNOWN = "unknown"
+
+
+class OpportunityRecommendation(str, Enum):
+    URGENT_REVIEW = "urgent_review"
+    WORTH_TRACKING = "worth_tracking"
+    INFORMATION_INCOMPLETE = "information_incomplete"
+    HIGH_RISK = "high_risk"
+    IGNORE = "ignore"
+    EXPIRED = "expired"
+
+
 class ConfidenceLevel(str, Enum):
     OFFICIAL_SOURCE = "official_source"
     MARKETPLACE_LISTING = "marketplace_listing"
@@ -135,6 +166,8 @@ class RawHardwareListing(BaseModel):
     seller_name: str | None = None
     page_type: HardwareResultPageType = HardwareResultPageType.IRRELEVANT
     classification_reason: str | None = None
+    detail_checked_at: datetime | None = None
+    detail_parse_status: str = "not_checked"
     raw_data: dict[str, Any] = Field(default_factory=dict)
     fetched_at: datetime = Field(default_factory=utc_now)
 
@@ -147,12 +180,24 @@ class HardwareOpportunity(BaseModel):
     manufacturer: str | None = None
     model: str | None = None
     part_number: str | None = None
+    lot_number: str | None = None
     generation: str | None = None
     configuration: str | None = None
     quantity: int | None = None
     quantity_status: str = "unknown"
     unit_price: float | None = None
     total_price: float | None = None
+    current_price: float | None = None
+    current_total_cost: float | None = None
+    buyer_premium: str | None = None
+    buyer_premium_amount: float | None = None
+    estimated_tax: float | None = None
+    estimated_shipping: float | None = None
+    estimated_landed_cost: float | None = None
+    cost_per_unit: float | None = None
+    cost_per_gb: float | None = None
+    cost_confidence: str = "unknown"
+    bid_count: int | None = None
     condition: HardwareCondition = HardwareCondition.UNKNOWN
     working_status: str = "unknown"
     testing_status: str = "unknown"
@@ -163,6 +208,8 @@ class HardwareOpportunity(BaseModel):
     pickup_only: bool | None = None
     shipping_available: bool | None = None
     auction_end_time: datetime | None = None
+    time_remaining: str | None = None
+    listing_status: ListingStatus = ListingStatus.UNKNOWN
     seller_name: str | None = None
     seller_type: str = "unknown"
     source: str
@@ -175,6 +222,13 @@ class HardwareOpportunity(BaseModel):
     last_seen_at: datetime = Field(default_factory=utc_now)
     last_changed_at: datetime | None = None
     status: OpportunityStatus = OpportunityStatus.NEEDS_VERIFICATION
+    component_completeness: ComponentCompleteness = ComponentCompleteness.UNKNOWN
+    component_details: dict[str, Any] = Field(default_factory=dict)
+    recommendation: OpportunityRecommendation = OpportunityRecommendation.INFORMATION_INCOMPLETE
+    recommendation_reasons: list[str] = Field(default_factory=list)
+    last_checked_at: datetime | None = None
+    unavailable_reason: str | None = None
+    needs_manual_review: bool = False
     confidence_level: ConfidenceLevel = ConfidenceLevel.NEEDS_VERIFICATION
     risk_flags: list[str] = Field(default_factory=list)
     change_types: list[HardwareChangeType] = Field(default_factory=list)
@@ -212,6 +266,11 @@ class HardwareQualityStats(BaseModel):
     quantity_changes: int = 0
     status_changes: int = 0
     final_opportunities: int = 0
+    active_opportunities: int = 0
+    ending_soon: int = 0
+    expired_removed: int = 0
+    unavailable_links: int = 0
+    needs_manual_review: int = 0
     high_score_opportunities: int = 0
     failed_sources: int = 0
 
@@ -303,4 +362,6 @@ class HardwareDashboard(BaseModel):
     timezone: str
     immediate_alerts: bool
     scheduler: HardwareSchedulerState
+    persistence_mode: str = "memory"
+    persistence_warning: str | None = None
     top_opportunities: list[HardwareOpportunity] = Field(default_factory=list)

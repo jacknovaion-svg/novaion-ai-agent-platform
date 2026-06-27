@@ -30,6 +30,7 @@ const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "
 const tabs = ["overview", "opportunities", "source runs", "telegram reports"] as const;
 type Tab = (typeof tabs)[number];
 type SortBy = "score" | "newest" | "price" | "auction" | "risk";
+type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "expired" | "missing_components" | "pickup_only";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
 type ScanPreset =
   | "full_hardware_scan"
@@ -139,6 +140,7 @@ export default function HardwareDashboardPage() {
   const [showQuality, setShowQuality] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>("score");
+  const [opportunityFilter, setOpportunityFilter] = useState<OpportunityFilter>("current");
   const [selectedOpportunity, setSelectedOpportunity] = useState<HardwareOpportunity | null>(null);
   const [telegramOpen, setTelegramOpen] = useState(false);
 
@@ -166,7 +168,8 @@ export default function HardwareDashboardPage() {
     return () => window.clearInterval(timer);
   }, [activeJobId, job?.status]);
 
-  const sortedOpportunities = useMemo(() => sortOpportunities(opportunities, sortBy), [opportunities, sortBy]);
+  const filteredOpportunities = useMemo(() => filterOpportunities(opportunities, opportunityFilter), [opportunities, opportunityFilter]);
+  const sortedOpportunities = useMemo(() => sortOpportunities(filteredOpportunities, sortBy), [filteredOpportunities, sortBy]);
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
   const scanProgress = useMemo(() => buildScanProgress(job), [job]);
   const coverageLabel = useMemo(
@@ -452,6 +455,7 @@ export default function HardwareDashboardPage() {
           </div>
         </div>
         {error ? <p className="danger-text">{error}</p> : null}
+        {dashboard?.persistence_warning ? <p className="warning-text">{dashboard.persistence_warning}</p> : null}
       </section>
 
       <section className="metric-grid dashboard-metrics">
@@ -534,6 +538,18 @@ export default function HardwareDashboardPage() {
                 <option value="price">Price</option>
                 <option value="auction">Auction End Time</option>
                 <option value="risk">Risk</option>
+              </select>
+            </label>
+            <label className="field compact-field sort-field">
+              <span>Filter</span>
+              <select className="select" value={opportunityFilter} onChange={(event) => setOpportunityFilter(event.target.value as OpportunityFilter)}>
+                <option value="current">Current</option>
+                <option value="active">Active</option>
+                <option value="ending_soon">Ending Soon</option>
+                <option value="needs_review">Needs Review</option>
+                <option value="expired">Expired</option>
+                <option value="missing_components">Missing Components</option>
+                <option value="pickup_only">Pickup Only</option>
               </select>
             </label>
           </div>
@@ -643,10 +659,15 @@ function OpportunityTable({
             <th>Category</th>
             <th>Title</th>
             <th>Model</th>
-            <th>Qty</th>
-            <th>Price</th>
+            <th>End Time</th>
+            <th>Time Left</th>
+            <th>Quantity</th>
+            <th>Current Price</th>
+            <th>Unit Cost</th>
+            <th>Location</th>
+            <th>Completeness</th>
             <th>Status</th>
-            <th>Source</th>
+            <th>Verification</th>
             <th>Action</th>
           </tr>
         </thead>
@@ -664,10 +685,15 @@ function OpportunityTable({
                 </div>
               </td>
               <td>{item.model ?? <span className="muted">verify</span>}</td>
+              <td>{formatShortDate(item.auction_end_time)}</td>
+              <td>{item.time_remaining ?? <span className="muted">verify</span>}</td>
               <td>{item.quantity ?? <span className="muted">verify</span>}</td>
-              <td>{formatMoney(item.total_price)}</td>
-              <td><span className="pill">{item.status}</span></td>
-              <td>{item.source}</td>
+              <td>{formatMoney(item.current_total_cost ?? item.total_price)}</td>
+              <td>{formatMoney(item.cost_per_unit ?? item.unit_price)}</td>
+              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">verify</span>}</td>
+              <td><span className="pill">{item.component_completeness}</span></td>
+              <td><span className="pill">{item.listing_status}</span></td>
+              <td>{item.needs_manual_review ? <span className="badge changed-badge">needs review</span> : <span className="badge new-badge">checked</span>}</td>
               <td>
                 <button className="button secondary compact-button" onClick={() => onView(item)}>
                   View
@@ -729,6 +755,11 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
   const items = [
     ["Raw", stats?.raw_results ?? 0],
     ["Specific", stats?.specific_listings ?? 0],
+    ["Active", stats?.active_opportunities ?? 0],
+    ["Ending Soon", stats?.ending_soon ?? 0],
+    ["Expired", stats?.expired_removed ?? 0],
+    ["Unavailable", stats?.unavailable_links ?? 0],
+    ["Needs Review", stats?.needs_manual_review ?? 0],
     ["Collections", stats?.listing_collections ?? 0],
     ["Source Pages", stats?.source_pages ?? 0],
     ["News", stats?.news_or_articles ?? 0],
@@ -764,24 +795,36 @@ function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOppo
             <StatusPill label="Risk" value={`${opportunity.risk_score.toFixed(0)}/100`} />
             <StatusPill label="Source" value={opportunity.source} />
             <StatusPill label="Page" value={opportunity.page_type} />
+            <StatusPill label="Listing" value={opportunity.listing_status} />
+            <StatusPill label="Recommendation" value={opportunity.recommendation} />
           </div>
           <div className="detail-compact-grid">
+            <Detail label="Lot Number" value={opportunity.lot_number} />
             <Detail label="Model" value={opportunity.model} />
             <Detail label="Quantity" value={opportunity.quantity} />
-            <Detail label="Unit Price" value={formatMoney(opportunity.unit_price)} />
-            <Detail label="Total Price" value={formatMoney(opportunity.total_price)} />
+            <Detail label="Current Price" value={formatMoney(opportunity.current_total_cost ?? opportunity.total_price)} />
+            <Detail label="Unit Cost" value={formatMoney(opportunity.cost_per_unit ?? opportunity.unit_price)} />
+            <Detail label="Cost / GB" value={formatMoney(opportunity.cost_per_gb)} />
+            <Detail label="Cost Confidence" value={opportunity.cost_confidence} />
+            <Detail label="Bid Count" value={opportunity.bid_count} />
+            <Detail label="Buyer Premium" value={opportunity.buyer_premium} />
             <Detail label="Condition" value={opportunity.condition} />
+            <Detail label="Completeness" value={opportunity.component_completeness} />
             <Detail label="Location" value={[opportunity.location_city, opportunity.location_state].filter(Boolean).join(", ")} />
             <Detail label="Auction End" value={formatDate(opportunity.auction_end_time)} />
+            <Detail label="Time Left" value={opportunity.time_remaining} />
             <Detail label="Pickup / Shipping" value={pickupShipping(opportunity)} />
+            <Detail label="Last Checked" value={formatDate(opportunity.last_checked_at)} />
           </div>
           <p className="muted">
             Fields needing verification: {missingFields.length ? missingFields.join(", ") : "none"}
           </p>
           <div className="badge-row">
+            {opportunity.recommendation_reasons.map((reason) => <span className="badge changed-badge" key={reason}>{reason}</span>)}
             {opportunity.risk_flags.map((flag) => <span className="badge" key={flag}>{flag}</span>)}
             {opportunity.change_types.map((change) => <span className="badge new-badge" key={change}>{change}</span>)}
           </div>
+          {opportunity.unavailable_reason ? <p className="danger-text">Unavailable reason: {opportunity.unavailable_reason}</p> : null}
           <div className="drawer-url">
             <span className="section-label">Canonical URL</span>
             <p>{opportunity.canonical_url ?? opportunity.source_url}</p>
@@ -852,10 +895,23 @@ function Detail({ label, value }: { label: string; value?: string | number | nul
 function sortOpportunities(opportunities: HardwareOpportunity[], sortBy: SortBy) {
   return [...opportunities].sort((a, b) => {
     if (sortBy === "newest") return Date.parse(b.first_seen_at) - Date.parse(a.first_seen_at);
-    if (sortBy === "price") return (b.total_price ?? -1) - (a.total_price ?? -1);
+    if (sortBy === "price") return (b.current_total_cost ?? b.total_price ?? -1) - (a.current_total_cost ?? a.total_price ?? -1);
     if (sortBy === "auction") return Date.parse(a.auction_end_time ?? "9999-12-31") - Date.parse(b.auction_end_time ?? "9999-12-31");
     if (sortBy === "risk") return b.risk_score - a.risk_score;
     return b.opportunity_score - a.opportunity_score;
+  });
+}
+
+function filterOpportunities(opportunities: HardwareOpportunity[], filter: OpportunityFilter) {
+  return opportunities.filter((item) => {
+    if (filter === "current") return !["ended", "sold", "removed", "unavailable"].includes(item.listing_status);
+    if (filter === "active") return item.listing_status === "active";
+    if (filter === "ending_soon") return item.listing_status === "ending_soon";
+    if (filter === "needs_review") return item.needs_manual_review || item.listing_status === "unknown";
+    if (filter === "expired") return ["ended", "sold", "removed", "unavailable"].includes(item.listing_status);
+    if (filter === "missing_components") return ["missing_storage", "missing_memory", "missing_cpu", "missing_psu", "barebone", "mixed_lot"].includes(item.component_completeness);
+    if (filter === "pickup_only") return item.pickup_only === true;
+    return true;
   });
 }
 
@@ -914,10 +970,12 @@ function regionStrategyDescription(strategy: RegionStrategy) {
 function fieldsNeedingVerification(item: HardwareOpportunity) {
   const fields: string[] = [];
   if (!item.quantity) fields.push("quantity");
-  if (!item.total_price && !item.unit_price) fields.push("price");
+  if (!item.total_price && !item.current_price && !item.unit_price) fields.push("price");
   if (!item.location_city && !item.location_state && !item.zip_code) fields.push("location");
   if (!item.configuration) fields.push("configuration");
   if (!item.auction_end_time) fields.push("auction end time");
+  if (item.listing_status === "unknown") fields.push("listing status");
+  if (item.component_completeness === "unknown") fields.push("component completeness");
   return fields;
 }
 
@@ -927,6 +985,10 @@ function formatMoney(value?: number | null) {
 
 function formatDate(value?: string | null) {
   return value ? new Date(value).toLocaleString() : "verify";
+}
+
+function formatShortDate(value?: string | null) {
+  return value ? new Date(value).toLocaleDateString() : "verify";
 }
 
 function pickupShipping(item: HardwareOpportunity) {

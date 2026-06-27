@@ -13,6 +13,7 @@ from app.hardware_daily.models import (
     HardwareQualityStats,
     HardwareResultPageType,
     HardwareSchedulerState,
+    ListingStatus,
     SchedulerStatus,
     HardwareScanJob,
     HardwareScanJobStatus,
@@ -23,7 +24,9 @@ from app.hardware_daily.models import (
     RawHardwareListing,
     utc_now,
 )
+from app.hardware_daily.detail_parser import HardwareListingDetailParser
 from app.hardware_daily.normalizer import HardwareListingNormalizer
+from app.hardware_daily.persistence import hardware_daily_persistence
 from app.hardware_daily.reporter import TelegramHardwareDailyReporter
 from app.hardware_daily.scoring import HardwareOpportunityScoringService
 from app.hardware_daily.store import hardware_daily_store
@@ -33,6 +36,7 @@ class HardwareHunterDailyScheduler:
     def __init__(self) -> None:
         self.settings = get_settings()
         self.query_builder = HardwareSearchQueryBuilder()
+        self.detail_parser = HardwareListingDetailParser()
         self.normalizer = HardwareListingNormalizer()
         self.scoring = HardwareOpportunityScoringService()
         self.reporter = TelegramHardwareDailyReporter()
@@ -88,8 +92,9 @@ class HardwareHunterDailyScheduler:
             if request.mode in {HardwareScanMode.ASSET_LISTING_SEARCH, HardwareScanMode.BOTH}:
                 raw_results = await self._run_asset_searches(job, request)
 
-            stats = self._quality_stats(raw_results, job)
             specific_raw_results = [raw for raw in raw_results if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING]
+            specific_raw_results = await self._enrich_specific_listings(specific_raw_results)
+            stats = self._quality_stats(raw_results, job)
             normalized = [self.normalizer.normalize(raw) for raw in specific_raw_results]
             deduped, duplicates_removed = self._dedupe(normalized)
             remembered = []
@@ -99,14 +104,22 @@ class HardwareHunterDailyScheduler:
                 key = self.normalizer.opportunity_key(opportunity)
                 saved, changes = hardware_daily_store.remember_opportunity(key, opportunity)
                 saved.change_types = changes
-                stats.new_opportunities += 1 if "NEW" in {change.value for change in changes} else 0
+                is_current = self._is_current_opportunity(saved)
+                if is_current and "NEW" in {change.value for change in changes}:
+                    stats.new_opportunities += 1
                 stats.price_changes += 1 if "PRICE_CHANGED" in {change.value for change in changes} else 0
                 stats.quantity_changes += 1 if "QUANTITY_CHANGED" in {change.value for change in changes} else 0
                 stats.status_changes += 1 if "STATUS_CHANGED" in {change.value for change in changes} else 0
-                stats.changed_opportunities += 1 if changes and "NEW" not in {change.value for change in changes} else 0
+                stats.changed_opportunities += 1 if is_current and changes and "NEW" not in {change.value for change in changes} else 0
                 remembered.append(saved)
 
-            job.opportunities = self.scoring.score(remembered)[:120]
+            scored = self.scoring.score(remembered)
+            stats.active_opportunities = len([item for item in scored if item.listing_status == ListingStatus.ACTIVE])
+            stats.ending_soon = len([item for item in scored if item.listing_status == ListingStatus.ENDING_SOON])
+            stats.expired_removed = len([item for item in scored if item.listing_status in {ListingStatus.ENDED, ListingStatus.SOLD, ListingStatus.REMOVED}])
+            stats.unavailable_links = len([item for item in scored if item.listing_status == ListingStatus.UNAVAILABLE])
+            stats.needs_manual_review = len([item for item in scored if item.needs_manual_review])
+            job.opportunities = [item for item in scored if self._is_current_opportunity(item)][:120]
             stats.final_opportunities = len(job.opportunities)
             stats.high_score_opportunities = len([item for item in job.opportunities if item.opportunity_score >= 60])
             job.quality_stats = stats
@@ -115,11 +128,13 @@ class HardwareHunterDailyScheduler:
             job.report = await self.reporter.build_and_send(job, action=report_action)
             job.completed_at = utc_now()
             hardware_daily_store.update_job(job)
+            hardware_daily_persistence.save_scan_job(job)
         except Exception as exc:
             job.status = HardwareScanJobStatus.FAILED
             job.error_message = str(exc)[:500]
             job.completed_at = utc_now()
             hardware_daily_store.update_job(job)
+            hardware_daily_persistence.save_scan_job(job)
             self.scheduler_state.last_error = str(exc)[:500]
         finally:
             self.scheduler_state.is_job_running = False
@@ -138,21 +153,24 @@ class HardwareHunterDailyScheduler:
         latest = jobs[0] if jobs else None
         from app.hardware_daily.models import HardwareDashboard
 
+        current = [item for item in hardware_daily_store.opportunities_by_key.values() if self._is_current_opportunity(item)]
         top = sorted(
-            hardware_daily_store.opportunities_by_key.values(),
+            current,
             key=lambda item: (item.opportunity_score, -item.risk_score),
             reverse=True,
         )[:20]
         return HardwareDashboard(
             total_jobs=len(jobs),
             total_opportunities_seen=len(hardware_daily_store.opportunities_by_key),
-            active_opportunities=len(top),
+            active_opportunities=len(current),
             latest_job=latest,
             telegram_enabled=self.settings.hardware_hunter_telegram_enabled,
             daily_report_hour=self.settings.hardware_hunter_daily_report_hour,
             timezone=self.settings.hardware_hunter_timezone,
             immediate_alerts=self.settings.hardware_hunter_immediate_alerts,
             scheduler=self.scheduler_state,
+            persistence_mode=hardware_daily_persistence.status.mode,
+            persistence_warning=hardware_daily_persistence.status.warning,
             top_opportunities=top,
         )
 
@@ -266,6 +284,23 @@ class HardwareHunterDailyScheduler:
                     hardware_daily_store.update_job(job)
         return raw_results
 
+    async def _enrich_specific_listings(self, raw_results: list[RawHardwareListing]) -> list[RawHardwareListing]:
+        enriched: list[RawHardwareListing] = []
+        for raw in raw_results:
+            try:
+                enriched.append(await asyncio.wait_for(self.detail_parser.enrich(raw), timeout=25))
+            except Exception as exc:
+                raw.detail_parse_status = "detail_failed"
+                raw.detail_checked_at = utc_now()
+                raw.raw_data["detail"] = {
+                    "listing_status": ListingStatus.UNKNOWN.value,
+                    "needs_manual_review": True,
+                    "unavailable_reason": str(exc)[:240],
+                    "checked_at": raw.detail_checked_at.isoformat(),
+                }
+                enriched.append(raw)
+        return enriched
+
     def _quality_stats(self, raw_results: list[RawHardwareListing], job: HardwareScanJob) -> HardwareQualityStats:
         stats = HardwareQualityStats(
             raw_results=len(raw_results),
@@ -296,6 +331,9 @@ class HardwareHunterDailyScheduler:
             seen.add(key)
             output.append(item)
         return output, duplicates
+
+    def _is_current_opportunity(self, opportunity) -> bool:
+        return opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON, ListingStatus.UNKNOWN}
 
     def _status_from_exception(self, exc: Exception) -> HardwareSourceRunStatus:
         message = str(exc).lower()
