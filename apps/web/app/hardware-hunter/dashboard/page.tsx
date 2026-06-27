@@ -1,6 +1,15 @@
 "use client";
 
-import { Bell, ExternalLink, Loader2, Pause, Play, RefreshCw, Send } from "lucide-react";
+import {
+  Bell,
+  ExternalLink,
+  Loader2,
+  Pause,
+  Play,
+  RefreshCw,
+  Send,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   createHardwareTelegramReport,
@@ -9,17 +18,32 @@ import {
   runHardwareDailyScan,
   updateHardwareScheduler,
 } from "@/lib/api";
-import type { HardwareCategory, HardwareDashboard, HardwareScanJob } from "@novaion/shared/types";
+import type {
+  HardwareCategory,
+  HardwareDashboard,
+  HardwareOpportunity,
+  HardwareScanJob,
+  HardwareSourceRun,
+} from "@novaion/shared/types";
 
 const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "cpu"];
+const tabs = ["overview", "opportunities", "source runs", "telegram reports"] as const;
+type Tab = (typeof tabs)[number];
+type SortBy = "score" | "newest" | "price" | "auction" | "risk";
 
 export default function HardwareDashboardPage() {
   const [dashboard, setDashboard] = useState<HardwareDashboard | null>(null);
   const [job, setJob] = useState<HardwareScanJob | null>(null);
-  const [selectedCategories, setSelectedCategories] = useState<HardwareCategory[]>(["servers", "gpu", "memory", "storage", "cpu"]);
+  const [selectedCategories, setSelectedCategories] = useState<HardwareCategory[]>(categories);
   const [states, setStates] = useState("TX, CA, GA");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<Tab>("overview");
+  const [showQuality, setShowQuality] = useState(false);
+  const [showSources, setShowSources] = useState(false);
+  const [sortBy, setSortBy] = useState<SortBy>("score");
+  const [selectedOpportunity, setSelectedOpportunity] = useState<HardwareOpportunity | null>(null);
+  const [telegramOpen, setTelegramOpen] = useState(false);
 
   const activeJobId = job?.id ?? dashboard?.latest_job?.id;
   const opportunities = job?.opportunities ?? dashboard?.top_opportunities ?? [];
@@ -33,7 +57,7 @@ export default function HardwareDashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (!activeJobId || job?.status === "completed" || job?.status === "partially_completed" || job?.status === "failed") return;
+    if (!activeJobId || ["completed", "partially_completed", "failed"].includes(job?.status ?? "")) return;
     const timer = window.setInterval(async () => {
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob(latest);
@@ -45,7 +69,12 @@ export default function HardwareDashboardPage() {
     return () => window.clearInterval(timer);
   }, [activeJobId, job?.status]);
 
-  const categoryLabel = useMemo(() => selectedCategories.join(", "), [selectedCategories]);
+  const sortedOpportunities = useMemo(() => sortOpportunities(opportunities, sortBy), [opportunities, sortBy]);
+  const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
+  const auctionEndingCount = useMemo(
+    () => opportunities.filter((item) => item.change_types.includes("AUCTION_ENDING")).length,
+    [opportunities],
+  );
 
   async function refreshDashboard() {
     try {
@@ -81,45 +110,21 @@ export default function HardwareDashboardPage() {
     }
   }
 
-  async function generateReport() {
-    if (!activeJobId) return;
-    setBusy(true);
-    try {
-      const generated = await createHardwareTelegramReport(activeJobId, "preview");
-      const latest = await getHardwareDailyScanJob(activeJobId);
-      setJob({ ...latest, report: generated });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Report failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function sendTelegramTest() {
+  async function generateReport(action: "preview" | "test" | "approve_and_send") {
     if (!activeJobId) return;
     setBusy(true);
     setError(null);
     try {
-      const generated = await createHardwareTelegramReport(activeJobId, "test", "NOVAION Hardware Hunter Telegram test message.");
+      const generated = await createHardwareTelegramReport(
+        activeJobId,
+        action,
+        action === "test" ? "NOVAION Hardware Hunter Telegram test message." : undefined,
+      );
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob({ ...latest, report: generated });
+      setTelegramOpen(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Telegram test failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function approveAndSendReport() {
-    if (!activeJobId) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const generated = await createHardwareTelegramReport(activeJobId, "approve_and_send");
-      const latest = await getHardwareDailyScanJob(activeJobId);
-      setJob({ ...latest, report: generated });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Telegram send failed");
+      setError(err instanceof Error ? err.message : "Telegram action failed");
     } finally {
       setBusy(false);
     }
@@ -145,194 +150,496 @@ export default function HardwareDashboardPage() {
   }
 
   return (
-    <div className="grid" style={{ gap: 18 }}>
-      <div className="grid" style={{ gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)", alignItems: "start" }}>
-        <section className="panel">
+    <div className="hardware-dashboard">
+      <section className="panel dashboard-control">
+        <div>
           <div className="section-label">Hardware Hunter V2</div>
-          <h1 className="page-title" style={{ marginTop: 8 }}>退役IT资产每日扫描</h1>
-          <p className="muted">
-            本地模式：公开搜索 GovDeals、Public Surplus、eBay、HGP 和工业拍卖发现结果，保留真实原始链接；不会自动购买、出价或联系卖家。
-          </p>
-          <div className="form-grid" style={{ marginTop: 18 }}>
-            <label className="field">
-              <span>States</span>
-              <input className="input" value={states} onChange={(event) => setStates(event.target.value)} />
-            </label>
-            <label className="field">
-              <span>Scan Mode</span>
-              <select className="select" defaultValue="both">
-                <option value="both">Asset Listing + Supplier Lead</option>
+          <h1 className="dashboard-title">退役IT资产扫描</h1>
+        </div>
+
+        <div className="dashboard-controls-grid">
+          <label className="field compact-field">
+            <span>States</span>
+            <input className="input" value={states} onChange={(event) => setStates(event.target.value)} />
+          </label>
+          <label className="field compact-field">
+            <span>Scan Mode</span>
+            <select className="select" defaultValue="both">
+              <option value="both">Asset + Supplier</option>
+            </select>
+          </label>
+          <div className="compact-category-row">
+            {categories.map((category) => (
+              <label className="compact-check" key={category}>
+                <input
+                  type="checkbox"
+                  checked={selectedCategories.includes(category)}
+                  onChange={() => toggleCategory(category)}
+                />
+                {category}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div className="dashboard-actions">
+          <button className="button gold" onClick={startScan} disabled={busy || selectedCategories.length === 0}>
+            {busy ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
+            Run Now
+          </button>
+          <button className="button secondary" onClick={refreshDashboard} disabled={busy}>
+            <RefreshCw size={17} />
+            Refresh
+          </button>
+          <StatusPill label="Scheduler" value={scheduler?.status ?? "paused"} />
+          <StatusPill label="Telegram" value={dashboard?.telegram_enabled ? "enabled" : "disabled"} />
+          <button className="button secondary icon-button" onClick={() => setScheduler("pause")} disabled={busy} title="Pause scheduler">
+            <Pause size={16} />
+          </button>
+          <button className="button secondary icon-button" onClick={() => setScheduler("resume")} disabled={busy} title="Resume scheduler">
+            <Play size={16} />
+          </button>
+        </div>
+        {error ? <p className="danger-text">{error}</p> : null}
+      </section>
+
+      <section className="metric-grid dashboard-metrics">
+        <Metric label="Final Opportunities" value={stats?.final_opportunities ?? dashboard?.active_opportunities ?? 0} />
+        <Metric label="New" value={stats?.new_opportunities ?? 0} />
+        <Metric label="Changed" value={stats?.changed_opportunities ?? 0} />
+        <Metric label="Auction Ending" value={auctionEndingCount} />
+        <Metric label="Failed Sources" value={stats?.failed_sources ?? sourceSummary.failed} tone={sourceSummary.failed ? "danger" : "normal"} />
+      </section>
+
+      <nav className="dashboard-tabs">
+        {tabs.map((tab) => (
+          <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
+            {tab}
+          </button>
+        ))}
+      </nav>
+
+      {activeTab === "overview" ? (
+        <div className="dashboard-overview">
+          <section className="panel compact-panel">
+            <div className="panel-head">
+              <div>
+                <div className="section-label">Top Opportunities</div>
+                <h2>Best current candidates</h2>
+              </div>
+              <button className="button secondary" onClick={() => setActiveTab("opportunities")}>
+                View All
+              </button>
+            </div>
+            <OpportunityTable
+              opportunities={sortedOpportunities.slice(0, 12)}
+              onView={setSelectedOpportunity}
+              compact
+            />
+          </section>
+
+          <section className="panel compact-panel">
+            <div className="panel-head">
+              <div>
+                <div className="section-label">Source Runs</div>
+                <h2>
+                  {sourceSummary.successful} Sources Successful / {sourceSummary.zero} Zero Results / {sourceSummary.failed} Failed
+                </h2>
+              </div>
+              <button className="button secondary" onClick={() => setShowSources((value) => !value)}>
+                {showSources ? "Collapse Source Runs" : "View Source Runs"}
+              </button>
+            </div>
+            {showSources ? <SourceRunsTable sourceRuns={sourceRuns} /> : null}
+          </section>
+
+          <section className="panel compact-panel">
+            <div className="panel-head">
+              <div>
+                <div className="section-label">Quality Details</div>
+                <h2>{stats?.raw_results ?? 0} raw / {stats?.specific_listings ?? 0} specific / {stats?.duplicates_removed ?? 0} duplicate</h2>
+              </div>
+              <button className="button secondary" onClick={() => setShowQuality((value) => !value)}>
+                {showQuality ? "Hide Quality Details" : "Quality Details"}
+              </button>
+            </div>
+            {showQuality ? <QualityDetails stats={stats} /> : null}
+          </section>
+        </div>
+      ) : null}
+
+      {activeTab === "opportunities" ? (
+        <section className="panel compact-panel">
+          <div className="panel-head">
+            <div>
+              <div className="section-label">Opportunities</div>
+              <h2>{sortedOpportunities.length} formal specific listings</h2>
+            </div>
+            <label className="field compact-field sort-field">
+              <span>Sort</span>
+              <select className="select" value={sortBy} onChange={(event) => setSortBy(event.target.value as SortBy)}>
+                <option value="score">Score</option>
+                <option value="newest">Newest</option>
+                <option value="price">Price</option>
+                <option value="auction">Auction End Time</option>
+                <option value="risk">Risk</option>
               </select>
             </label>
           </div>
-          <div style={{ marginTop: 14 }}>
-            <div className="section-label">Categories: {categoryLabel}</div>
-            <div className="source-grid">
-              {categories.map((category) => (
-                <label className="check" key={category}>
-                  <input
-                    type="checkbox"
-                    checked={selectedCategories.includes(category)}
-                    onChange={() => toggleCategory(category)}
-                  />
-                  {category}
-                </label>
-              ))}
-            </div>
-          </div>
-          {error ? <p style={{ color: "var(--danger)" }}>{error}</p> : null}
-          <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-            <button className="button" onClick={startScan} disabled={busy || selectedCategories.length === 0}>
-              {busy ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
-              Start 24h Test Scan
-            </button>
-            <button className="button secondary" onClick={refreshDashboard} disabled={busy}>
-              <RefreshCw size={17} />
-              Refresh
-            </button>
-            <button className="button secondary" onClick={generateReport} disabled={busy || !activeJobId}>
-              <Bell size={17} />
-              Preview Daily Report
-            </button>
-            <button className="button secondary" onClick={sendTelegramTest} disabled={busy || !activeJobId}>
-              <Send size={17} />
-              Send Test Message
-            </button>
-            <button className="button gold" onClick={approveAndSendReport} disabled={busy || !activeJobId}>
-              <Send size={17} />
-              Approve and Send
-            </button>
-          </div>
+          <OpportunityTable opportunities={sortedOpportunities} onView={setSelectedOpportunity} />
         </section>
+      ) : null}
 
-        <aside className="panel">
-          <div className="section-label">Scheduler</div>
-          <h2 style={{ marginTop: 8 }}>Daily Report</h2>
-          <div className="agent-list">
-            <div className="agent-row"><span>Telegram</span><span className="pill">{dashboard?.telegram_enabled ? "enabled" : "disabled"}</span></div>
-            <div className="agent-row"><span>Report hour</span><span className="pill">{dashboard?.daily_report_hour ?? 8}:00</span></div>
-            <div className="agent-row"><span>Timezone</span><span className="pill">{dashboard?.timezone ?? "America/Los_Angeles"}</span></div>
-            <div className="agent-row"><span>Immediate alerts</span><span className="pill">{dashboard?.immediate_alerts ? "enabled" : "disabled"}</span></div>
-            <div className="agent-row"><span>Scheduler</span><span className="pill">{scheduler?.status ?? "paused"}</span></div>
-            <div className="agent-row"><span>Running job</span><span className="pill">{scheduler?.is_job_running ? "yes" : "no"}</span></div>
-            <div className="agent-row"><span>Last run</span><span>{scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : "none"}</span></div>
-            <div className="agent-row"><span>Next run</span><span>{scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : "paused"}</span></div>
-          </div>
-          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-            <button className="button secondary" onClick={() => setScheduler("pause")} disabled={busy}>
-              <Pause size={16} />
-              Pause
-            </button>
-            <button className="button secondary" onClick={() => setScheduler("resume")} disabled={busy}>
-              <Play size={16} />
-              Resume
+      {activeTab === "source runs" ? (
+        <section className="panel compact-panel">
+          <div className="panel-head">
+            <div>
+              <div className="section-label">Source Runs</div>
+              <h2>
+                {sourceSummary.successful} successful / {sourceSummary.zero} zero / {sourceSummary.failed} failed
+              </h2>
+            </div>
+            <button className="button secondary" onClick={() => setShowSources((value) => !value)}>
+              {showSources ? "Collapse Source Runs" : "View Source Runs"}
             </button>
           </div>
-          <p className="muted" style={{ marginTop: 14 }}>
-            Telegram 默认关闭。配置 Bot Token 和 Chat ID 后，后端可以把同一份中文日报发送到 Telegram。
-          </p>
-        </aside>
-      </div>
+          {showSources ? <SourceRunsTable sourceRuns={sourceRuns} /> : <p className="muted">Source run details are collapsed by default.</p>}
+        </section>
+      ) : null}
 
-      <section className="metric-grid">
-        <div className="metric"><span>Job Status</span><strong>{job?.status ?? dashboard?.latest_job?.status ?? "no job"}</strong></div>
-        <div className="metric"><span>Raw Results</span><strong>{stats?.raw_results ?? 0}</strong></div>
-        <div className="metric"><span>Specific Listings</span><strong>{stats?.specific_listings ?? 0}</strong></div>
-        <div className="metric"><span>Collections</span><strong>{stats?.listing_collections ?? 0}</strong></div>
-        <div className="metric"><span>Source Pages</span><strong>{stats?.source_pages ?? 0}</strong></div>
-        <div className="metric"><span>Final Opportunities</span><strong>{stats?.final_opportunities ?? dashboard?.active_opportunities ?? 0}</strong></div>
-        <div className="metric"><span>Duplicates Removed</span><strong>{stats?.duplicates_removed ?? 0}</strong></div>
-        <div className="metric"><span>New</span><strong>{stats?.new_opportunities ?? 0}</strong></div>
-        <div className="metric"><span>Changed</span><strong>{stats?.changed_opportunities ?? 0}</strong></div>
-      </section>
-
-      <section className="panel">
-        <div className="section-label">Source Runs</div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Source</th>
-                <th>Category</th>
-                <th>Status</th>
-                <th>Results</th>
-                <th>Query</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sourceRuns.slice(0, 30).map((run) => (
-                <tr key={run.id}>
-                  <td>{run.source_name}</td>
-                  <td>{run.category ?? "-"}</td>
-                  <td><span className="pill">{run.status}</span></td>
-                  <td>{run.result_count}</td>
-                  <td className="muted">{run.query}</td>
-                </tr>
-              ))}
-              {!sourceRuns.length ? <tr><td colSpan={5} className="muted">No source runs yet.</td></tr> : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="grid" style={{ gridTemplateColumns: "minmax(0, 1fr) minmax(340px, 0.8fr)", alignItems: "start" }}>
-        <div className="grid">
-          {opportunities.map((item) => (
-            <article className="panel" key={item.opportunity_id}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 14 }}>
-                <div>
-                  <div className="section-label">{item.category} · {item.source}</div>
-                  <h3 style={{ margin: "8px 0" }}>{item.title}</h3>
-                  <p className="muted">{item.raw_description || "No public snippet available."}</p>
-                </div>
-                <div style={{ textAlign: "right", minWidth: 120 }}>
-                  <strong>{item.opportunity_score.toFixed(0)}/100</strong>
-                  <div className="muted">risk {item.risk_score.toFixed(0)}</div>
-                </div>
-              </div>
-              <div className="agent-list" style={{ marginTop: 12 }}>
-                <div className="agent-row"><span>Model</span><span>{item.model ?? "unknown"}</span></div>
-                <div className="agent-row"><span>Quantity</span><span>{item.quantity ?? "unknown"}</span></div>
-                <div className="agent-row"><span>Total Price</span><span>{item.total_price ? `$${item.total_price.toLocaleString()}` : "unknown"}</span></div>
-                <div className="agent-row"><span>Condition</span><span>{item.condition}</span></div>
-                <div className="agent-row"><span>Page Type</span><span>{item.page_type}</span></div>
-                <div className="agent-row"><span>Confidence</span><span>{item.confidence_level}</span></div>
-                <div className="agent-row"><span>Canonical URL</span><span className="muted">{item.canonical_url ?? "unknown"}</span></div>
-              </div>
-              {item.classification_reason ? <p className="muted">{item.classification_reason}</p> : null}
-              <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-                {item.change_types.map((change) => <span className="pill" key={change}>{change}</span>)}
-                {item.risk_flags.map((flag) => <span className="pill" key={flag}>{flag}</span>)}
-              </div>
-              <a className="button secondary" style={{ marginTop: 14, display: "inline-flex" }} href={item.source_url} target="_blank">
-                <ExternalLink size={16} />
-                Open Original Link
-              </a>
-            </article>
-          ))}
-          {!opportunities.length ? <div className="panel muted">还没有扫描结果。点击 Start 24h Test Scan 开始本地测试。</div> : null}
-        </div>
-        <aside className="panel">
-          <div className="section-label">Telegram Preview</div>
-          <h2 style={{ marginTop: 8 }}>中文日报</h2>
-          <pre style={{ whiteSpace: "pre-wrap", color: "var(--muted)", fontSize: 12, lineHeight: 1.6 }}>
-            {report?.message_zh ?? "生成日报后会显示在这里。"}
-          </pre>
-          {report?.delivery_log ? (
-            <div className="agent-row">
-              <span>Delivery</span>
-              <span className="pill">{report.delivery_log.status}</span>
+      {activeTab === "telegram reports" ? (
+        <section className="panel compact-panel">
+          <div className="panel-head">
+            <div>
+              <div className="section-label">Telegram Reports</div>
+              <h2>Preview, test, approve</h2>
             </div>
-          ) : null}
-          {report?.delivery_log?.telegram_message_id ? (
-            <div className="agent-row">
-              <span>Message ID</span>
-              <span className="pill">{report.delivery_log.telegram_message_id}</span>
+            <div className="dashboard-actions no-margin">
+              <button className="button secondary" onClick={() => generateReport("preview")} disabled={busy || !activeJobId}>
+                <Bell size={17} />
+                Preview Daily Report
+              </button>
+              <button className="button secondary" onClick={() => generateReport("test")} disabled={busy || !activeJobId}>
+                <Send size={17} />
+                Send Test Message
+              </button>
+              <button className="button gold" onClick={() => generateReport("approve_and_send")} disabled={busy || !activeJobId}>
+                <Send size={17} />
+                Approve and Send
+              </button>
             </div>
-          ) : null}
-          {report?.delivery_log?.error_message ? <p style={{ color: "var(--danger)" }}>{report.delivery_log.error_message}</p> : null}
-        </aside>
-      </section>
+          </div>
+          <div className="telegram-summary">
+            <StatusPill label="Delivery" value={report?.delivery_log?.status ?? "none"} />
+            <StatusPill label="Message ID" value={report?.delivery_log?.telegram_message_id ?? "none"} />
+            <button className="button secondary" onClick={() => setTelegramOpen(true)} disabled={!report}>
+              Open Preview
+            </button>
+          </div>
+          {report?.delivery_log?.error_message ? <p className="danger-text">{report.delivery_log.error_message}</p> : null}
+        </section>
+      ) : null}
+
+      <OpportunityDrawer opportunity={selectedOpportunity} onClose={() => setSelectedOpportunity(null)} />
+      <TelegramDrawer
+        open={telegramOpen}
+        reportText={report?.message_zh}
+        deliveryStatus={report?.delivery_log?.status}
+        messageId={report?.delivery_log?.telegram_message_id}
+        error={report?.delivery_log?.error_message}
+        onClose={() => setTelegramOpen(false)}
+      />
     </div>
   );
+}
+
+function Metric({ label, value, tone = "normal" }: { label: string; value: number | string; tone?: "normal" | "danger" }) {
+  return (
+    <div className={`metric compact-metric ${tone === "danger" ? "danger-metric" : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function StatusPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="status-pill">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+function OpportunityTable({
+  opportunities,
+  onView,
+  compact = false,
+}: {
+  opportunities: HardwareOpportunity[];
+  onView: (opportunity: HardwareOpportunity) => void;
+  compact?: boolean;
+}) {
+  if (!opportunities.length) {
+    return <div className="muted empty-state">No formal specific listings yet.</div>;
+  }
+  return (
+    <div className="table-wrap compact-table-wrap">
+      <table className="compact-table opportunity-table">
+        <thead>
+          <tr>
+            <th>Score</th>
+            <th>Category</th>
+            <th>Title</th>
+            <th>Model</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th>Status</th>
+            <th>Source</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {opportunities.slice(0, compact ? 12 : opportunities.length).map((item) => (
+            <tr key={`${item.opportunity_id}-${item.source_url}`}>
+              <td>
+                <span className="score-ring">{item.opportunity_score.toFixed(0)}</span>
+              </td>
+              <td>{item.category}</td>
+              <td>
+                <div className="title-cell">
+                  <span>{item.title}</span>
+                  <BadgeRow item={item} />
+                </div>
+              </td>
+              <td>{item.model ?? <span className="muted">verify</span>}</td>
+              <td>{item.quantity ?? <span className="muted">verify</span>}</td>
+              <td>{formatMoney(item.total_price)}</td>
+              <td><span className="pill">{item.status}</span></td>
+              <td>{item.source}</td>
+              <td>
+                <button className="button secondary compact-button" onClick={() => onView(item)}>
+                  View
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BadgeRow({ item }: { item: HardwareOpportunity }) {
+  const badges = [...item.change_types, ...item.risk_flags].slice(0, 4);
+  if (!badges.length) return null;
+  return (
+    <div className="badge-row">
+      {badges.map((badge) => (
+        <span className={`badge ${badge === "NEW" ? "new-badge" : badge.includes("CHANGED") ? "changed-badge" : ""}`} key={badge}>
+          {badge}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
+  return (
+    <div className="table-wrap compact-table-wrap">
+      <table className="compact-table source-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Category</th>
+            <th>Status</th>
+            <th>Results</th>
+            <th>Query</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sourceRuns.map((run) => (
+            <tr key={run.id}>
+              <td>{run.source_name}</td>
+              <td>{run.category ?? "-"}</td>
+              <td><span className="pill">{run.status}</span></td>
+              <td>{run.result_count}</td>
+              <td className="muted truncate-query" title={run.query ?? ""}>{run.query ?? "-"}</td>
+            </tr>
+          ))}
+          {!sourceRuns.length ? <tr><td colSpan={5} className="muted">No source runs yet.</td></tr> : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | undefined }) {
+  const items = [
+    ["Raw", stats?.raw_results ?? 0],
+    ["Specific", stats?.specific_listings ?? 0],
+    ["Collections", stats?.listing_collections ?? 0],
+    ["Source Pages", stats?.source_pages ?? 0],
+    ["News", stats?.news_or_articles ?? 0],
+    ["Irrelevant", stats?.irrelevant ?? 0],
+    ["Duplicates", stats?.duplicates_removed ?? 0],
+  ];
+  return (
+    <div className="quality-strip">
+      {items.map(([label, value]) => (
+        <span key={label}>
+          {label}
+          <strong>{value}</strong>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOpportunity | null; onClose: () => void }) {
+  if (!opportunity) return null;
+  const missingFields = fieldsNeedingVerification(opportunity);
+  return (
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={(event) => event.stopPropagation()}>
+        <DrawerHeader title="Opportunity Details" onClose={onClose} />
+        <div className="drawer-body">
+          <div className="drawer-title-row">
+            <h2>{opportunity.title}</h2>
+            <span className="score-ring large">{opportunity.opportunity_score.toFixed(0)}</span>
+          </div>
+          <p className="muted">{opportunity.raw_description || "No public snippet available."}</p>
+          <div className="drawer-score-row">
+            <StatusPill label="Risk" value={`${opportunity.risk_score.toFixed(0)}/100`} />
+            <StatusPill label="Source" value={opportunity.source} />
+            <StatusPill label="Page" value={opportunity.page_type} />
+          </div>
+          <div className="detail-compact-grid">
+            <Detail label="Model" value={opportunity.model} />
+            <Detail label="Quantity" value={opportunity.quantity} />
+            <Detail label="Unit Price" value={formatMoney(opportunity.unit_price)} />
+            <Detail label="Total Price" value={formatMoney(opportunity.total_price)} />
+            <Detail label="Condition" value={opportunity.condition} />
+            <Detail label="Location" value={[opportunity.location_city, opportunity.location_state].filter(Boolean).join(", ")} />
+            <Detail label="Auction End" value={formatDate(opportunity.auction_end_time)} />
+            <Detail label="Pickup / Shipping" value={pickupShipping(opportunity)} />
+          </div>
+          <p className="muted">
+            Fields needing verification: {missingFields.length ? missingFields.join(", ") : "none"}
+          </p>
+          <div className="badge-row">
+            {opportunity.risk_flags.map((flag) => <span className="badge" key={flag}>{flag}</span>)}
+            {opportunity.change_types.map((change) => <span className="badge new-badge" key={change}>{change}</span>)}
+          </div>
+          <div className="drawer-url">
+            <span className="section-label">Canonical URL</span>
+            <p>{opportunity.canonical_url ?? opportunity.source_url}</p>
+          </div>
+          <a className="button gold" href={opportunity.source_url} target="_blank">
+            <ExternalLink size={16} />
+            Open Original Link
+          </a>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function TelegramDrawer({
+  open,
+  reportText,
+  deliveryStatus,
+  messageId,
+  error,
+  onClose,
+}: {
+  open: boolean;
+  reportText?: string;
+  deliveryStatus?: string;
+  messageId?: string | null;
+  error?: string | null;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={(event) => event.stopPropagation()}>
+        <DrawerHeader title="Telegram Report" onClose={onClose} />
+        <div className="drawer-body">
+          <div className="drawer-score-row">
+            <StatusPill label="Delivery" value={deliveryStatus ?? "none"} />
+            <StatusPill label="Message ID" value={messageId ?? "none"} />
+          </div>
+          {error ? <p className="danger-text">{error}</p> : null}
+          <pre className="telegram-preview">{reportText ?? "No report preview yet."}</pre>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function DrawerHeader({ title, onClose }: { title: string; onClose: () => void }) {
+  return (
+    <div className="drawer-header">
+      <h2>{title}</h2>
+      <button className="button secondary icon-button" onClick={onClose}>
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
+
+function Detail({ label, value }: { label: string; value?: string | number | null }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value || <span className="muted">verify</span>}</strong>
+    </div>
+  );
+}
+
+function sortOpportunities(opportunities: HardwareOpportunity[], sortBy: SortBy) {
+  return [...opportunities].sort((a, b) => {
+    if (sortBy === "newest") return Date.parse(b.first_seen_at) - Date.parse(a.first_seen_at);
+    if (sortBy === "price") return (b.total_price ?? -1) - (a.total_price ?? -1);
+    if (sortBy === "auction") return Date.parse(a.auction_end_time ?? "9999-12-31") - Date.parse(b.auction_end_time ?? "9999-12-31");
+    if (sortBy === "risk") return b.risk_score - a.risk_score;
+    return b.opportunity_score - a.opportunity_score;
+  });
+}
+
+function summarizeSources(sourceRuns: HardwareSourceRun[]) {
+  return sourceRuns.reduce(
+    (summary, run) => {
+      if (["failed", "timeout", "blocked"].includes(run.status)) summary.failed += 1;
+      else if (run.result_count === 0) summary.zero += 1;
+      else summary.successful += 1;
+      return summary;
+    },
+    { successful: 0, zero: 0, failed: 0 },
+  );
+}
+
+function fieldsNeedingVerification(item: HardwareOpportunity) {
+  const fields: string[] = [];
+  if (!item.quantity) fields.push("quantity");
+  if (!item.total_price && !item.unit_price) fields.push("price");
+  if (!item.location_city && !item.location_state && !item.zip_code) fields.push("location");
+  if (!item.configuration) fields.push("configuration");
+  if (!item.auction_end_time) fields.push("auction end time");
+  return fields;
+}
+
+function formatMoney(value?: number | null) {
+  return value ? `$${value.toLocaleString()}` : "verify";
+}
+
+function formatDate(value?: string | null) {
+  return value ? new Date(value).toLocaleString() : "verify";
+}
+
+function pickupShipping(item: HardwareOpportunity) {
+  const pickup = item.pickup_only === true ? "pickup only" : item.pickup_only === false ? "pickup unknown" : "pickup verify";
+  const shipping = item.shipping_available === true ? "shipping yes" : item.shipping_available === false ? "shipping no" : "shipping verify";
+  return `${pickup} / ${shipping}`;
 }
