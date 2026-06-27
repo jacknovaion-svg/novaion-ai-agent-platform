@@ -72,6 +72,16 @@ class ListingStatus(str, Enum):
     SOLD = "sold"
     REMOVED = "removed"
     UNAVAILABLE = "unavailable"
+    NEEDS_MANUAL_REVIEW = "needs_manual_review"
+    UNKNOWN = "unknown"
+
+
+class AuctionEndVerificationLevel(str, Enum):
+    SOURCE_CONFIRMED = "source_confirmed"
+    COUNTDOWN_ESTIMATED = "countdown_estimated"
+    SECONDARY_SOURCE_CONFIRMED = "secondary_source_confirmed"
+    MANUALLY_VERIFIED = "manually_verified"
+    CONFLICTING = "conflicting"
     UNKNOWN = "unknown"
 
 
@@ -210,6 +220,31 @@ class HardwareOpportunity(BaseModel):
     auction_end_time: datetime | None = None
     time_remaining: str | None = None
     listing_status: ListingStatus = ListingStatus.UNKNOWN
+    end_time_verification: AuctionEndVerificationLevel = AuctionEndVerificationLevel.UNKNOWN
+    end_time_raw: str | None = None
+    end_time_timezone_raw: str | None = None
+    end_time_utc: datetime | None = None
+    end_time_user_timezone: str | None = None
+    timezone_needs_verification: bool = False
+    countdown_raw_text: str | None = None
+    countdown_captured_at: datetime | None = None
+    calculated_end_time: datetime | None = None
+    calculated_timezone: str | None = None
+    calculation_confidence: str | None = None
+    last_status_check_at: datetime | None = None
+    next_status_check_at: datetime | None = None
+    status_check_attempts: int = 0
+    status_check_result: str | None = None
+    status_check_error: str | None = None
+    automated_result: dict[str, Any] = Field(default_factory=dict)
+    manual_result: dict[str, Any] = Field(default_factory=dict)
+    final_status: ListingStatus = ListingStatus.UNKNOWN
+    manual_end_time: datetime | None = None
+    manual_timezone: str | None = None
+    manual_status: ListingStatus | None = None
+    manual_notes: str | None = None
+    verified_by: str | None = None
+    verified_at: datetime | None = None
     seller_name: str | None = None
     seller_type: str = "unknown"
     source: str
@@ -247,9 +282,11 @@ class HardwareOpportunity(BaseModel):
         for field_name in ["recommendation_reasons", "risk_flags", "change_types", "score_reasons"]:
             if data.get(field_name) is None:
                 data[field_name] = []
-        for field_name in ["component_details", "raw_data_json"]:
+        for field_name in ["component_details", "raw_data_json", "automated_result", "manual_result"]:
             if data.get(field_name) is None:
                 data[field_name] = {}
+        if data.get("final_status") is None:
+            data["final_status"] = data.get("listing_status") or ListingStatus.UNKNOWN.value
         if data.get("cost_confidence") is None:
             data["cost_confidence"] = "unknown"
         if data.get("quantity_status") is None:
@@ -333,6 +370,24 @@ class TelegramReportRequest(BaseModel):
     message: str | None = None
 
 
+class HardwareManualStatusReviewRequest(BaseModel):
+    manual_status: ListingStatus
+    manual_end_time: datetime | None = None
+    manual_timezone: str | None = None
+    manual_notes: str | None = None
+    verified_by: str | None = "local_user"
+
+
+class HardwareListingRecheckSummary(BaseModel):
+    checked: int = 0
+    auto_active: int = 0
+    auto_ended: int = 0
+    ending_soon: int = 0
+    needs_manual_review: int = 0
+    conflicting: int = 0
+    errors: int = 0
+
+
 class SchedulerStatus(str, Enum):
     RUNNING = "running"
     PAUSED = "paused"
@@ -382,3 +437,5 @@ class HardwareDashboard(BaseModel):
     persistence_mode: str = "memory"
     persistence_warning: str | None = None
     top_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
+    history_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
+    needs_review_opportunities: list[HardwareOpportunity] = Field(default_factory=list)

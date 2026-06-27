@@ -29,6 +29,7 @@ from app.hardware_daily.normalizer import HardwareListingNormalizer
 from app.hardware_daily.persistence import hardware_daily_persistence
 from app.hardware_daily.reporter import TelegramHardwareDailyReporter
 from app.hardware_daily.scoring import HardwareOpportunityScoringService
+from app.hardware_daily.status_recheck import listing_status_recheck_service
 from app.hardware_daily.store import hardware_daily_store
 
 
@@ -95,7 +96,7 @@ class HardwareHunterDailyScheduler:
             specific_raw_results = [raw for raw in raw_results if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING]
             specific_raw_results = await self._enrich_specific_listings(specific_raw_results)
             stats = self._quality_stats(raw_results, job)
-            normalized = [self.normalizer.normalize(raw) for raw in specific_raw_results]
+            normalized = [listing_status_recheck_service._apply_status_rules(self.normalizer.normalize(raw)) for raw in specific_raw_results]
             deduped, duplicates_removed = self._dedupe(normalized)
             remembered = []
             stats.normalized_listings = len(normalized)
@@ -116,9 +117,9 @@ class HardwareHunterDailyScheduler:
             scored = self.scoring.score(remembered)
             stats.active_opportunities = len([item for item in scored if item.listing_status == ListingStatus.ACTIVE])
             stats.ending_soon = len([item for item in scored if item.listing_status == ListingStatus.ENDING_SOON])
-            stats.expired_removed = len([item for item in scored if item.listing_status in {ListingStatus.ENDED, ListingStatus.SOLD, ListingStatus.REMOVED}])
+            stats.expired_removed = len([item for item in scored if self._is_history_opportunity(item)])
             stats.unavailable_links = len([item for item in scored if item.listing_status == ListingStatus.UNAVAILABLE])
-            stats.needs_manual_review = len([item for item in scored if item.needs_manual_review])
+            stats.needs_manual_review = len([item for item in scored if self._is_needs_review_opportunity(item)])
             job.opportunities = [item for item in scored if self._is_current_opportunity(item)][:120]
             stats.final_opportunities = len(job.opportunities)
             stats.high_score_opportunities = len([item for item in job.opportunities if item.opportunity_score >= 60])
@@ -153,7 +154,10 @@ class HardwareHunterDailyScheduler:
         latest = jobs[0] if jobs else None
         from app.hardware_daily.models import HardwareDashboard
 
-        current = [item for item in hardware_daily_store.opportunities_by_key.values() if self._is_current_opportunity(item)]
+        all_opportunities = list(hardware_daily_store.opportunities_by_key.values())
+        current = [item for item in all_opportunities if self._is_current_opportunity(item)]
+        history = [item for item in all_opportunities if self._is_history_opportunity(item)]
+        needs_review = [item for item in all_opportunities if self._is_needs_review_opportunity(item)]
         top = sorted(
             current,
             key=lambda item: (item.opportunity_score, -item.risk_score),
@@ -172,6 +176,8 @@ class HardwareHunterDailyScheduler:
             persistence_mode=hardware_daily_persistence.status.mode,
             persistence_warning=hardware_daily_persistence.status.warning,
             top_opportunities=top,
+            history_opportunities=sorted(history, key=lambda item: item.last_seen_at, reverse=True)[:80],
+            needs_review_opportunities=sorted(needs_review, key=lambda item: item.last_seen_at, reverse=True)[:80],
         )
 
     async def generate_report(self, job_id: UUID, action="preview", message: str | None = None):
@@ -181,6 +187,18 @@ class HardwareHunterDailyScheduler:
         job.report = await self.reporter.build_and_send(job, action=action, message_override=message)
         hardware_daily_store.update_job(job)
         return job.report
+
+    async def recheck_opportunity(self, opportunity_id: UUID):
+        for item in hardware_daily_store.opportunities_by_key.values():
+            if item.opportunity_id == opportunity_id:
+                return await listing_status_recheck_service.recheck_opportunity(item)
+        return None
+
+    async def bulk_recheck(self, limit: int = 80):
+        return await listing_status_recheck_service.bulk_recheck(limit=limit)
+
+    def manual_status_review(self, opportunity_id: UUID, payload):
+        return listing_status_recheck_service.apply_manual_review(str(opportunity_id), payload)
 
     def scheduler_status(self) -> HardwareSchedulerState:
         self._refresh_next_run()
@@ -333,7 +351,28 @@ class HardwareHunterDailyScheduler:
         return output, duplicates
 
     def _is_current_opportunity(self, opportunity) -> bool:
-        return opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON, ListingStatus.UNKNOWN}
+        if opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
+            return True
+        if opportunity.listing_status == ListingStatus.UNKNOWN:
+            reference_time = opportunity.last_status_check_at or opportunity.first_seen_at
+            return bool(reference_time and utc_now() - reference_time <= timedelta(hours=24))
+        return False
+
+    def _is_needs_review_opportunity(self, opportunity) -> bool:
+        if opportunity.listing_status == ListingStatus.NEEDS_MANUAL_REVIEW or opportunity.needs_manual_review:
+            return True
+        if opportunity.listing_status == ListingStatus.UNKNOWN:
+            reference_time = opportunity.last_status_check_at or opportunity.first_seen_at
+            return bool(reference_time and utc_now() - reference_time > timedelta(hours=24))
+        return False
+
+    def _is_history_opportunity(self, opportunity) -> bool:
+        return opportunity.listing_status in {
+            ListingStatus.ENDED,
+            ListingStatus.SOLD,
+            ListingStatus.REMOVED,
+            ListingStatus.UNAVAILABLE,
+        }
 
     def _status_from_exception(self, exc: Exception) -> HardwareSourceRunStatus:
         message = str(exc).lower()

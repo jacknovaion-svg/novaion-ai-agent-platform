@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from app.hardware_daily.models import (
@@ -10,6 +11,7 @@ from app.hardware_daily.models import (
     HardwareCategory,
     HardwareCondition,
     HardwareOpportunity,
+    AuctionEndVerificationLevel,
     ListingStatus,
     OpportunityRecommendation,
     OpportunityStatus,
@@ -42,6 +44,11 @@ class HardwareListingNormalizer:
             risk_flags.append("buyer_premium")
         canonical_url = self.canonical_url(raw.source_url)
         listing_status = self._listing_status(detail, lower)
+        end_time_utc = self._datetime_or_none(detail.get("end_time_utc")) or self._datetime_or_none(detail.get("auction_end_time"))
+        countdown_captured_at = self._datetime_or_none(detail.get("countdown_captured_at"))
+        calculated_end_time = self._datetime_or_none(detail.get("calculated_end_time"))
+        status_check_at = raw.detail_checked_at or utc_now()
+        next_status_check_at = self._next_status_check(listing_status, end_time_utc, status_check_at, int(detail.get("status_check_attempts") or 0))
         component_completeness = self._component_completeness(lower, risk_flags)
         component_details = self._component_details(text, raw.category, quantity)
         cost_fields = self._cost_fields(total_price=total_price, current_price=current_price, quantity=quantity, category=raw.category, component_details=component_details)
@@ -78,7 +85,30 @@ class HardwareListingNormalizer:
             zip_code=detail.get("zip_code"),
             pickup_only=detail.get("pickup_only") if isinstance(detail.get("pickup_only"), bool) else ("pickup only" in lower or "local pickup" in lower),
             shipping_available=detail.get("shipping_available") if isinstance(detail.get("shipping_available"), bool) else (None if "shipping" not in lower else "no shipping" not in lower),
-            auction_end_time=self._datetime_or_none(detail.get("auction_end_time")),
+            auction_end_time=end_time_utc,
+            end_time_verification=self._end_time_verification(detail),
+            end_time_raw=detail.get("end_time_raw") or detail.get("auction_end_time_raw"),
+            end_time_timezone_raw=detail.get("end_time_timezone_raw"),
+            end_time_utc=end_time_utc,
+            end_time_user_timezone=self._user_time(end_time_utc),
+            timezone_needs_verification=bool(detail.get("timezone_needs_verification")),
+            countdown_raw_text=detail.get("countdown_raw_text"),
+            countdown_captured_at=countdown_captured_at,
+            calculated_end_time=calculated_end_time,
+            calculated_timezone=detail.get("calculated_timezone"),
+            calculation_confidence=detail.get("calculation_confidence"),
+            last_status_check_at=status_check_at,
+            next_status_check_at=next_status_check_at,
+            status_check_attempts=int(detail.get("status_check_attempts") or 0),
+            status_check_result=detail.get("status_check_result") or detail.get("listing_status_reason"),
+            status_check_error=detail.get("status_check_error"),
+            automated_result={
+                "listing_status": listing_status.value,
+                "end_time_verification": detail.get("end_time_verification") or AuctionEndVerificationLevel.UNKNOWN.value,
+                "checked_at": status_check_at.isoformat(),
+                "reason": detail.get("listing_status_reason"),
+            },
+            final_status=listing_status,
             seller_name=seller_name,
             seller_type=self._seller_type(lower, raw.source_name),
             source=raw.source_name,
@@ -89,13 +119,13 @@ class HardwareListingNormalizer:
             classification_reason=raw.classification_reason,
             status=status,
             listing_status=listing_status,
-            time_remaining=detail.get("time_remaining"),
+            time_remaining=detail.get("time_remaining") or detail.get("countdown_raw_text"),
             component_completeness=component_completeness,
             component_details=component_details,
             recommendation=OpportunityRecommendation.INFORMATION_INCOMPLETE,
             last_checked_at=raw.detail_checked_at or utc_now(),
             unavailable_reason=detail.get("unavailable_reason"),
-            needs_manual_review=bool(detail.get("needs_manual_review") or listing_status == ListingStatus.UNKNOWN),
+            needs_manual_review=bool(detail.get("needs_manual_review") or listing_status in {ListingStatus.UNKNOWN, ListingStatus.NEEDS_MANUAL_REVIEW}),
             confidence_level=confidence,
             risk_flags=list(dict.fromkeys(risk_flags)),
             raw_title=raw.original_title,
@@ -182,18 +212,28 @@ class HardwareListingNormalizer:
     def _int_or_none(self, value) -> int | None:
         if value is None:
             return None
+        try:
+            return int(str(value).replace(",", "").strip())
+        except ValueError:
+            return None
 
     def _datetime_or_none(self, value) -> datetime | None:
         if not value:
             return None
         try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=ZoneInfo("UTC"))
         except ValueError:
             return None
-        try:
-            return int(str(value).replace(",", "").strip())
-        except ValueError:
-            return None
+
+    def _end_time_verification(self, detail: dict) -> AuctionEndVerificationLevel:
+        value = detail.get("end_time_verification")
+        if value:
+            try:
+                return AuctionEndVerificationLevel(value)
+            except ValueError:
+                pass
+        return AuctionEndVerificationLevel.UNKNOWN
 
     def _listing_status(self, detail: dict, lower: str) -> ListingStatus:
         raw_status = detail.get("listing_status")
@@ -216,6 +256,31 @@ class HardwareListingNormalizer:
         if listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
             return OpportunityStatus.ACTIVE
         return OpportunityStatus.NEEDS_VERIFICATION
+
+    def _next_status_check(self, listing_status: ListingStatus, end_time_utc: datetime | None, checked_at: datetime, attempts: int) -> datetime | None:
+        if listing_status in {ListingStatus.ENDED, ListingStatus.SOLD, ListingStatus.REMOVED}:
+            return checked_at + self._hours(168)
+        if listing_status == ListingStatus.ENDING_SOON:
+            return checked_at + self._hours(1)
+        if listing_status == ListingStatus.ACTIVE:
+            if end_time_utc and end_time_utc - checked_at <= self._hours(72):
+                return checked_at + self._hours(6)
+            return checked_at + self._hours(24)
+        if listing_status == ListingStatus.UNKNOWN:
+            return checked_at + self._hours(12)
+        if listing_status == ListingStatus.NEEDS_MANUAL_REVIEW:
+            return checked_at + self._hours(24) if attempts < 3 else None
+        return checked_at + self._hours(24)
+
+    def _hours(self, value: int):
+        from datetime import timedelta
+
+        return timedelta(hours=value)
+
+    def _user_time(self, end_time_utc: datetime | None) -> str | None:
+        if not end_time_utc:
+            return None
+        return end_time_utc.astimezone(ZoneInfo("America/Los_Angeles")).isoformat()
 
     def _buyer_premium(self, text: str, detail: dict) -> str | None:
         if detail.get("buyer_premium"):

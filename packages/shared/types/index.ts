@@ -284,7 +284,47 @@ export interface HardwareOpportunity {
     | "sold"
     | "removed"
     | "unavailable"
+    | "needs_manual_review"
     | "unknown";
+  end_time_verification:
+    | "source_confirmed"
+    | "countdown_estimated"
+    | "secondary_source_confirmed"
+    | "manually_verified"
+    | "conflicting"
+    | "unknown";
+  end_time_raw?: string | null;
+  end_time_timezone_raw?: string | null;
+  end_time_utc?: string | null;
+  end_time_user_timezone?: string | null;
+  timezone_needs_verification: boolean;
+  countdown_raw_text?: string | null;
+  countdown_captured_at?: string | null;
+  calculated_end_time?: string | null;
+  calculated_timezone?: string | null;
+  calculation_confidence?: string | null;
+  last_status_check_at?: string | null;
+  next_status_check_at?: string | null;
+  status_check_attempts: number;
+  status_check_result?: string | null;
+  status_check_error?: string | null;
+  automated_result: Record<string, unknown>;
+  manual_result: Record<string, unknown>;
+  final_status:
+    | "active"
+    | "ending_soon"
+    | "ended"
+    | "sold"
+    | "removed"
+    | "unavailable"
+    | "needs_manual_review"
+    | "unknown";
+  manual_end_time?: string | null;
+  manual_timezone?: string | null;
+  manual_status?: string | null;
+  manual_notes?: string | null;
+  verified_by?: string | null;
+  verified_at?: string | null;
   seller_name?: string | null;
   seller_type: string;
   source: string;
@@ -420,6 +460,18 @@ export interface HardwareDashboard {
   persistence_mode: string;
   persistence_warning?: string | null;
   top_opportunities: HardwareOpportunity[];
+  history_opportunities: HardwareOpportunity[];
+  needs_review_opportunities: HardwareOpportunity[];
+}
+
+export interface HardwareListingRecheckSummary {
+  checked: number;
+  auto_active: number;
+  auto_ended: number;
+  ending_soon: number;
+  needs_manual_review: number;
+  conflicting: number;
+  errors: number;
 }
 
 export type SiteHunterJobStatus =

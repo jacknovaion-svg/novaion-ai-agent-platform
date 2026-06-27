@@ -9,6 +9,9 @@ from app.hardware_daily.job_service import hardware_daily_scheduler
 from app.hardware_daily.models import (
     HardwareDailyReport,
     HardwareDashboard,
+    HardwareListingRecheckSummary,
+    HardwareManualStatusReviewRequest,
+    HardwareOpportunity,
     HardwareScanJob,
     HardwareScanRequest,
     HardwareSchedulerState,
@@ -37,6 +40,27 @@ def get_daily_scan_job(job_id: UUID) -> HardwareScanJob:
 @router.get("/daily-scan/dashboard", response_model=HardwareDashboard)
 def get_hardware_dashboard() -> HardwareDashboard:
     return hardware_daily_scheduler.dashboard()
+
+
+@router.post("/daily-scan/opportunities/{opportunity_id}/recheck", response_model=HardwareOpportunity)
+async def recheck_hardware_opportunity(opportunity_id: UUID) -> HardwareOpportunity:
+    opportunity = await hardware_daily_scheduler.recheck_opportunity(opportunity_id)
+    if not opportunity:
+        raise HTTPException(status_code=404, detail="Hardware opportunity not found")
+    return opportunity
+
+
+@router.post("/daily-scan/recheck", response_model=HardwareListingRecheckSummary)
+async def recheck_hardware_opportunities(limit: int = 80) -> HardwareListingRecheckSummary:
+    return await hardware_daily_scheduler.bulk_recheck(limit=limit)
+
+
+@router.post("/daily-scan/opportunities/{opportunity_id}/manual-status", response_model=HardwareOpportunity)
+def update_hardware_manual_status(opportunity_id: UUID, payload: HardwareManualStatusReviewRequest) -> HardwareOpportunity:
+    opportunity = hardware_daily_scheduler.manual_status_review(opportunity_id, payload)
+    if not opportunity:
+        raise HTTPException(status_code=404, detail="Hardware opportunity not found")
+    return opportunity
 
 
 @router.post("/daily-scan/jobs/{job_id}/telegram-report", response_model=HardwareDailyReport)

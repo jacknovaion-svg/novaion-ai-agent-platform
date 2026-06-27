@@ -9,6 +9,8 @@ import type {
   SupplierSearchJob,
   HardwareDashboard,
   HardwareDailyReport,
+  HardwareListingRecheckSummary,
+  HardwareOpportunity,
   HardwareSchedulerState,
   HardwareScanJob,
 } from "@novaion/shared/types";
@@ -254,6 +256,37 @@ export async function getHardwareDailyScanJob(jobId: string): Promise<HardwareSc
 export async function getHardwareDashboard(): Promise<HardwareDashboard> {
   const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/dashboard`, { cache: "no-store" });
   if (!response.ok) throw new Error("Hardware dashboard failed");
+  return response.json();
+}
+
+export async function recheckHardwareOpportunities(limit = 80): Promise<HardwareListingRecheckSummary> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/recheck?limit=${limit}`, { method: "POST" });
+  if (!response.ok) throw new Error("Hardware recheck failed");
+  return response.json();
+}
+
+export async function recheckHardwareOpportunity(opportunityId: string): Promise<HardwareOpportunity> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/opportunities/${opportunityId}/recheck`, { method: "POST" });
+  if (!response.ok) throw new Error("Opportunity recheck failed");
+  return response.json();
+}
+
+export async function updateHardwareOpportunityManualStatus(
+  opportunityId: string,
+  payload: {
+    manual_status: string;
+    manual_end_time?: string | null;
+    manual_timezone?: string | null;
+    manual_notes?: string | null;
+    verified_by?: string | null;
+  },
+): Promise<HardwareOpportunity> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/opportunities/${opportunityId}/manual-status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Manual status update failed");
   return response.json();
 }
 

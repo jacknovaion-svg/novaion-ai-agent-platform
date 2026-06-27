@@ -15,7 +15,10 @@ import {
   createHardwareTelegramReport,
   getHardwareDailyScanJob,
   getHardwareDashboard,
+  recheckHardwareOpportunities,
+  recheckHardwareOpportunity,
   runHardwareDailyScan,
+  updateHardwareOpportunityManualStatus,
   updateHardwareScheduler,
 } from "@/lib/api";
 import type {
@@ -143,9 +146,16 @@ export default function HardwareDashboardPage() {
   const [opportunityFilter, setOpportunityFilter] = useState<OpportunityFilter>("current");
   const [selectedOpportunity, setSelectedOpportunity] = useState<HardwareOpportunity | null>(null);
   const [telegramOpen, setTelegramOpen] = useState(false);
+  const [recheckSummary, setRecheckSummary] = useState<string | null>(null);
 
   const activeJobId = job?.id ?? dashboard?.latest_job?.id;
-  const opportunities = job?.opportunities ?? dashboard?.top_opportunities ?? [];
+  const dashboardOpportunities = [
+    ...(dashboard?.top_opportunities ?? []),
+    ...(dashboard?.history_opportunities ?? []),
+    ...(dashboard?.needs_review_opportunities ?? []),
+  ];
+  const opportunities = job?.opportunities?.length ? job.opportunities : dashboardOpportunities;
+  const topCurrentOpportunities = dashboard?.top_opportunities ?? job?.opportunities ?? [];
   const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
@@ -250,6 +260,56 @@ export default function HardwareDashboardPage() {
       await refreshDashboard();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scheduler update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bulkRecheck() {
+    setBusy(true);
+    setError(null);
+    setRecheckSummary(null);
+    try {
+      const summary = await recheckHardwareOpportunities(80);
+      setRecheckSummary(
+        `Rechecked ${summary.checked}: active ${summary.auto_active}, ending soon ${summary.ending_soon}, ended ${summary.auto_ended}, needs review ${summary.needs_manual_review}, conflicting ${summary.conflicting}, errors ${summary.errors}`,
+      );
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Listing recheck failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function recheckSelectedOpportunity(opportunityId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await recheckHardwareOpportunity(opportunityId);
+      setSelectedOpportunity(updated);
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Opportunity recheck failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function manualStatus(opportunityId: string, manualStatusValue: string, manualEndTime?: string | null) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await updateHardwareOpportunityManualStatus(opportunityId, {
+        manual_status: manualStatusValue,
+        manual_end_time: manualEndTime || null,
+        manual_timezone: "America/Los_Angeles",
+        verified_by: "local_user",
+      });
+      setSelectedOpportunity(updated);
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Manual status update failed");
     } finally {
       setBusy(false);
     }
@@ -420,6 +480,9 @@ export default function HardwareDashboardPage() {
               <RefreshCw size={17} />
               Refresh
             </button>
+            <button className="button secondary" onClick={bulkRecheck} disabled={busy}>
+              Recheck Listings
+            </button>
             <div className="scan-summary">
               {coverageLabel || "No states"} · {selectedCategories.length} categories · {sourceCount} sources · {estimatedTasks} estimated tasks
             </div>
@@ -456,6 +519,7 @@ export default function HardwareDashboardPage() {
         </div>
         {error ? <p className="danger-text">{error}</p> : null}
         {dashboard?.persistence_warning ? <p className="warning-text">{dashboard.persistence_warning}</p> : null}
+        {recheckSummary ? <p className="muted">{recheckSummary}</p> : null}
       </section>
 
       <section className="metric-grid dashboard-metrics">
@@ -487,7 +551,7 @@ export default function HardwareDashboardPage() {
               </button>
             </div>
             <OpportunityTable
-              opportunities={sortedOpportunities.slice(0, 12)}
+              opportunities={sortOpportunities(topCurrentOpportunities, sortBy).slice(0, 12)}
               onView={setSelectedOpportunity}
               compact
             />
@@ -607,7 +671,12 @@ export default function HardwareDashboardPage() {
         </section>
       ) : null}
 
-      <OpportunityDrawer opportunity={selectedOpportunity} onClose={() => setSelectedOpportunity(null)} />
+      <OpportunityDrawer
+        opportunity={selectedOpportunity}
+        onClose={() => setSelectedOpportunity(null)}
+        onRecheck={recheckSelectedOpportunity}
+        onManualStatus={manualStatus}
+      />
       <TelegramDrawer
         open={telegramOpen}
         reportText={report?.message_zh}
@@ -686,15 +755,15 @@ function OpportunityTable({
                 </div>
               </td>
               <td>{item.model ?? <span className="muted">verify</span>}</td>
-              <td>{formatShortDate(item.auction_end_time)}</td>
-              <td>{item.time_remaining ?? <span className="muted">verify</span>}</td>
+              <td>{formatEndTime(item)}</td>
+              <td>{timeLeftLabel(item)}</td>
               <td>{item.quantity ?? <span className="muted">verify</span>}</td>
               <td>{formatMoney(item.current_total_cost ?? item.total_price)}</td>
               <td>{formatMoney(item.cost_per_unit ?? item.unit_price)}</td>
               <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">verify</span>}</td>
               <td><span className="pill">{item.component_completeness}</span></td>
               <td><span className="pill">{item.listing_status}</span></td>
-              <td>{item.needs_manual_review ? <span className="badge changed-badge">needs review</span> : <span className="badge new-badge">checked</span>}</td>
+              <td>{verificationBadge(item)}</td>
               <td>
                 <button className="button secondary compact-button" onClick={() => onView(item)}>
                   View
@@ -780,7 +849,17 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
   );
 }
 
-function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOpportunity | null; onClose: () => void }) {
+function OpportunityDrawer({
+  opportunity,
+  onClose,
+  onRecheck,
+  onManualStatus,
+}: {
+  opportunity: HardwareOpportunity | null;
+  onClose: () => void;
+  onRecheck: (opportunityId: string) => void;
+  onManualStatus: (opportunityId: string, status: string, manualEndTime?: string | null) => void;
+}) {
   if (!opportunity) return null;
   const missingFields = fieldsNeedingVerification(opportunity);
   const recommendationReasons = opportunity.recommendation_reasons ?? [];
@@ -802,6 +881,7 @@ function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOppo
             <StatusPill label="Source" value={opportunity.source} />
             <StatusPill label="Page" value={opportunity.page_type} />
             <StatusPill label="Listing" value={opportunity.listing_status} />
+            <StatusPill label="Verification" value={opportunity.end_time_verification ?? "unknown"} />
             <StatusPill label="Recommendation" value={opportunity.recommendation} />
           </div>
           <div className="detail-compact-grid">
@@ -817,8 +897,12 @@ function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOppo
             <Detail label="Condition" value={opportunity.condition} />
             <Detail label="Completeness" value={opportunity.component_completeness} />
             <Detail label="Location" value={[opportunity.location_city, opportunity.location_state].filter(Boolean).join(", ")} />
-            <Detail label="Auction End" value={formatDate(opportunity.auction_end_time)} />
+            <Detail label="End Time" value={formatEndTime(opportunity)} />
+            <Detail label="User Time" value={formatDate(opportunity.end_time_user_timezone)} />
             <Detail label="Time Left" value={opportunity.time_remaining} />
+            <Detail label="End Raw" value={opportunity.end_time_raw} />
+            <Detail label="Timezone" value={opportunity.timezone_needs_verification ? "needs verification" : opportunity.end_time_timezone_raw} />
+            <Detail label="Next Recheck" value={formatDate(opportunity.next_status_check_at)} />
             <Detail label="Pickup / Shipping" value={pickupShipping(opportunity)} />
             <Detail label="Last Checked" value={formatDate(opportunity.last_checked_at)} />
           </div>
@@ -835,14 +919,41 @@ function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOppo
             <p className="muted">No additional flags</p>
           )}
           {opportunity.unavailable_reason ? <p className="danger-text">Unavailable reason: {opportunity.unavailable_reason}</p> : null}
+          <p className="muted">
+            Status reason: {opportunity.status_check_result || opportunity.unavailable_reason || "No status note"}
+          </p>
           <div className="drawer-url">
             <span className="section-label">Canonical URL</span>
             <p>{opportunity.canonical_url ?? opportunity.source_url}</p>
           </div>
-          <a className="button gold" href={opportunity.source_url} target="_blank">
-            <ExternalLink size={16} />
-            Open Original Link
-          </a>
+          <div className="actions">
+            <button className="button secondary" type="button" onClick={() => onRecheck(opportunity.opportunity_id)}>
+              <RefreshCw size={16} />
+              Recheck Now
+            </button>
+            <a className="button gold" href={opportunity.source_url} target="_blank">
+              <ExternalLink size={16} />
+              Open Original Link
+            </a>
+          </div>
+          <div className="actions">
+            <button className="button secondary" type="button" onClick={() => onManualStatus(opportunity.opportunity_id, "active")}>Mark Still Active</button>
+            <button className="button secondary" type="button" onClick={() => onManualStatus(opportunity.opportunity_id, "ended")}>Mark Ended</button>
+            <button className="button secondary" type="button" onClick={() => onManualStatus(opportunity.opportunity_id, "sold")}>Mark Sold</button>
+            <button className="button secondary" type="button" onClick={() => onManualStatus(opportunity.opportunity_id, "unavailable")}>Mark Unavailable</button>
+          </div>
+          <div className="actions">
+            <button
+              className="button secondary"
+              type="button"
+              onClick={() => {
+                const value = window.prompt("Enter end time in ISO format, e.g. 2026-06-29T20:00:00-05:00");
+                if (value) onManualStatus(opportunity.opportunity_id, "active", value);
+              }}
+            >
+              Enter End Time
+            </button>
+          </div>
         </div>
       </aside>
     </div>
@@ -914,10 +1025,10 @@ function sortOpportunities(opportunities: HardwareOpportunity[], sortBy: SortBy)
 
 function filterOpportunities(opportunities: HardwareOpportunity[], filter: OpportunityFilter) {
   return opportunities.filter((item) => {
-    if (filter === "current") return !["ended", "sold", "removed", "unavailable"].includes(item.listing_status);
+    if (filter === "current") return ["active", "ending_soon"].includes(item.listing_status) || (item.listing_status === "unknown" && !item.needs_manual_review);
     if (filter === "active") return item.listing_status === "active";
     if (filter === "ending_soon") return item.listing_status === "ending_soon";
-    if (filter === "needs_review") return item.needs_manual_review || item.listing_status === "unknown";
+    if (filter === "needs_review") return item.needs_manual_review || ["unknown", "needs_manual_review"].includes(item.listing_status);
     if (filter === "expired") return ["ended", "sold", "removed", "unavailable"].includes(item.listing_status);
     if (filter === "missing_components") return ["missing_storage", "missing_memory", "missing_cpu", "missing_psu", "barebone", "mixed_lot"].includes(item.component_completeness);
     if (filter === "pickup_only") return item.pickup_only === true;
@@ -999,6 +1110,37 @@ function formatDate(value?: string | null) {
 
 function formatShortDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "verify";
+}
+
+function formatEndTime(item: HardwareOpportunity) {
+  const value = item.end_time_utc ?? item.auction_end_time;
+  if (!value) return "Unknown";
+  const rawZone = item.end_time_timezone_raw ? ` ${item.end_time_timezone_raw}` : "";
+  return `${new Date(value).toLocaleString()}${rawZone}`;
+}
+
+function timeLeftLabel(item: HardwareOpportunity) {
+  if (item.time_remaining) return item.time_remaining;
+  const value = item.end_time_utc ?? item.auction_end_time;
+  if (!value) return <span className="muted">Unknown</span>;
+  const ms = Date.parse(value) - Date.now();
+  if (ms <= 0) return "Ended";
+  const hours = Math.floor(ms / 3600000);
+  const minutes = Math.floor((ms % 3600000) / 60000);
+  return `${hours}h ${minutes}m`;
+}
+
+function verificationBadge(item: HardwareOpportunity) {
+  if (item.needs_manual_review || item.listing_status === "needs_manual_review") {
+    return <span className="badge changed-badge">needs review</span>;
+  }
+  if (item.end_time_verification === "unknown") {
+    return <span className="badge">unknown</span>;
+  }
+  if (item.end_time_verification === "conflicting") {
+    return <span className="badge changed-badge">conflicting</span>;
+  }
+  return <span className="badge new-badge">{item.end_time_verification}</span>;
 }
 
 function pickupShipping(item: HardwareOpportunity) {

@@ -22,6 +22,13 @@ class HardwareOpportunityScoringService:
                 item.recommendation_reasons = ["expired_or_unavailable"]
                 item.score_reasons = ["Listing is not currently actionable"]
                 continue
+            if item.listing_status == ListingStatus.NEEDS_MANUAL_REVIEW:
+                item.opportunity_score = 0
+                item.risk_score = 85
+                item.recommendation = OpportunityRecommendation.INFORMATION_INCOMPLETE
+                item.recommendation_reasons = ["needs_manual_review"]
+                item.score_reasons = ["Listing status could not be confirmed automatically"]
+                continue
             if item.category.value in item.title.lower() or item.model:
                 score += 20
                 reasons.append("型号或品类识别清晰")

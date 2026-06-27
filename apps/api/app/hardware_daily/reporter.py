@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -103,14 +104,14 @@ class TelegramHardwareDailyReporter:
             f"原始结果: {stats.raw_results} | 具体listing: {stats.specific_listings} | 当前有效机会: {stats.final_opportunities} | 新机会: {stats.new_opportunities}",
             f"分类页: {stats.listing_collections} | 来源页: {stats.source_pages} | 无关: {stats.irrelevant}",
             f"Active: {stats.active_opportunities} | Ending soon: {stats.ending_soon} | 已过滤过期: {stats.expired_removed} | 失效链接: {stats.unavailable_links}",
-            f"变化机会: {stats.changed_opportunities} | 价格变化: {stats.price_changes} | 数量变化: {stats.quantity_changes} | 失败来源: {stats.failed_sources}",
+            f"Needs review: {stats.needs_manual_review} | 变化机会: {stats.changed_opportunities} | 价格变化: {stats.price_changes} | 失败来源: {stats.failed_sources}",
             "",
             "Top重点机会:",
         ]
         current_opportunities = [
             item
             for item in job.opportunities
-            if item.listing_status not in {ListingStatus.ENDED, ListingStatus.SOLD, ListingStatus.REMOVED, ListingStatus.UNAVAILABLE}
+            if self._eligible_for_top_report(item)
         ]
         for index, item in enumerate(current_opportunities[:8], start=1):
             price = f"${item.current_total_cost or item.total_price:,.0f}" if item.current_total_cost or item.total_price else "价格 unknown"
@@ -137,3 +138,11 @@ class TelegramHardwareDailyReporter:
             ]
         )
         return "\n".join(lines)
+
+    def _eligible_for_top_report(self, item) -> bool:
+        if item.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
+            return True
+        if item.listing_status == ListingStatus.UNKNOWN and not item.needs_manual_review:
+            reference_time = item.last_status_check_at or item.first_seen_at
+            return bool(reference_time and utc_now() - reference_time <= timedelta(hours=48))
+        return False
