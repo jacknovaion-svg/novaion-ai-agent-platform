@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 def utc_now() -> datetime:
@@ -238,6 +238,23 @@ class HardwareOpportunity(BaseModel):
     raw_title: str
     raw_description: str | None = None
     raw_data_json: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_legacy_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        for field_name in ["recommendation_reasons", "risk_flags", "change_types", "score_reasons"]:
+            if data.get(field_name) is None:
+                data[field_name] = []
+        for field_name in ["component_details", "raw_data_json"]:
+            if data.get(field_name) is None:
+                data[field_name] = {}
+        if data.get("cost_confidence") is None:
+            data["cost_confidence"] = "unknown"
+        if data.get("quantity_status") is None:
+            data["quantity_status"] = "unknown"
+        return data
 
 
 class HardwarePriceHistoryRecord(BaseModel):

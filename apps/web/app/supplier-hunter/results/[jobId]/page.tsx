@@ -46,9 +46,9 @@ export default function SupplierHunterResultsPage() {
       if (capabilityFilter) {
         const haystack = [
           supplier.company_type,
-          supplier.equipment_types.join(" "),
-          supplier.score_reasons.join(" "),
-          supplier.quality_flags.join(" "),
+          (supplier.equipment_types ?? []).join(" "),
+          (supplier.score_reasons ?? []).join(" "),
+          (supplier.quality_flags ?? []).join(" "),
         ].join(" ").toLowerCase();
         if (!haystack.includes(capabilityFilter.toLowerCase())) return false;
       }
@@ -62,7 +62,7 @@ export default function SupplierHunterResultsPage() {
       if (!current) return current;
       return {
         ...current,
-        results: current.results.map((supplier) => (supplier.supplier_id === supplierId ? { ...supplier, ...updated } : supplier)),
+        results: (current.results ?? []).map((supplier) => (supplier.supplier_id === supplierId ? { ...supplier, ...updated } : supplier)),
       };
     });
   }
@@ -143,6 +143,9 @@ function Metric({ label, value }: { label: string; value: number }) {
 }
 
 function SupplierCard({ supplier, onReview }: { supplier: SupplierResult; onReview: (supplierId: string, status: string) => void }) {
+  const equipmentTypes = supplier.equipment_types ?? [];
+  const scoreReasons = supplier.score_reasons ?? [];
+  const qualityFlags = supplier.quality_flags ?? [];
   return (
     <article className="panel site-card">
       <div className="site-card-head">
@@ -162,9 +165,9 @@ function SupplierCard({ supplier, onReview }: { supplier: SupplierResult; onRevi
         <span>Remarketing: {supplier.asset_remarketing ? "yes" : "unknown"}</span>
         <span>Bulk: {supplier.bulk_sales || supplier.wholesale ? "yes" : "unknown"}</span>
       </div>
-      <p className="muted">Equipment: {supplier.equipment_types.length ? supplier.equipment_types.join(", ") : "unknown"}</p>
-      {supplier.score_reasons.length ? <p>{supplier.score_reasons.join(" · ")}</p> : null}
-      {supplier.quality_flags.length ? <p className="muted">{supplier.quality_flags.join(" · ")}</p> : null}
+      <p className="muted">Equipment: {equipmentTypes.length ? equipmentTypes.join(", ") : "unknown"}</p>
+      {scoreReasons.length ? <p>{scoreReasons.join(" · ")}</p> : null}
+      {qualityFlags.length ? <p className="muted">{qualityFlags.join(" · ")}</p> : null}
       <div className="actions">
         {supplier.website ? (
           <a className="button secondary" href={supplier.website} target="_blank" rel="noreferrer">
@@ -192,4 +195,3 @@ function SupplierCard({ supplier, onReview }: { supplier: SupplierResult; onRevi
     </article>
   );
 }
-

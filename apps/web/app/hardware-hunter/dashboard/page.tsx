@@ -187,7 +187,7 @@ export default function HardwareDashboardPage() {
     return "Run Scan Now";
   }, [busy, job?.status, scanProgress.isScanning]);
   const auctionEndingCount = useMemo(
-    () => opportunities.filter((item) => item.change_types.includes("AUCTION_ENDING")).length,
+    () => opportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING")).length,
     [opportunities],
   );
 
@@ -647,7 +647,8 @@ function OpportunityTable({
   onView: (opportunity: HardwareOpportunity) => void;
   compact?: boolean;
 }) {
-  if (!opportunities.length) {
+  const rows = opportunities ?? [];
+  if (!rows.length) {
     return <div className="muted empty-state">No formal specific listings yet.</div>;
   }
   return (
@@ -672,7 +673,7 @@ function OpportunityTable({
           </tr>
         </thead>
         <tbody>
-          {opportunities.slice(0, compact ? 12 : opportunities.length).map((item) => (
+          {rows.slice(0, compact ? 12 : rows.length).map((item) => (
             <tr key={`${item.opportunity_id}-${item.source_url}`}>
               <td>
                 <span className="score-ring">{item.opportunity_score.toFixed(0)}</span>
@@ -708,7 +709,7 @@ function OpportunityTable({
 }
 
 function BadgeRow({ item }: { item: HardwareOpportunity }) {
-  const badges = [...item.change_types, ...item.risk_flags].slice(0, 4);
+  const badges = [...(item.change_types ?? []), ...(item.risk_flags ?? [])].slice(0, 4);
   if (!badges.length) return null;
   return (
     <div className="badge-row">
@@ -722,6 +723,7 @@ function BadgeRow({ item }: { item: HardwareOpportunity }) {
 }
 
 function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
+  const rows = sourceRuns ?? [];
   return (
     <div className="table-wrap compact-table-wrap">
       <table className="compact-table source-table">
@@ -735,7 +737,7 @@ function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
           </tr>
         </thead>
         <tbody>
-          {sourceRuns.map((run) => (
+          {rows.map((run) => (
             <tr key={run.id}>
               <td>{run.source_name}</td>
               <td>{run.category ?? "-"}</td>
@@ -744,7 +746,7 @@ function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
               <td className="muted truncate-query" title={run.query ?? ""}>{run.query ?? "-"}</td>
             </tr>
           ))}
-          {!sourceRuns.length ? <tr><td colSpan={5} className="muted">No source runs yet.</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={5} className="muted">No source runs yet.</td></tr> : null}
         </tbody>
       </table>
     </div>
@@ -781,6 +783,10 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
 function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOpportunity | null; onClose: () => void }) {
   if (!opportunity) return null;
   const missingFields = fieldsNeedingVerification(opportunity);
+  const recommendationReasons = opportunity.recommendation_reasons ?? [];
+  const riskFlags = opportunity.risk_flags ?? [];
+  const changeTypes = opportunity.change_types ?? [];
+  const badgeCount = recommendationReasons.length + riskFlags.length + changeTypes.length;
   return (
     <div className="drawer-backdrop" onClick={onClose}>
       <aside className="drawer" onClick={(event) => event.stopPropagation()}>
@@ -819,11 +825,15 @@ function OpportunityDrawer({ opportunity, onClose }: { opportunity: HardwareOppo
           <p className="muted">
             Fields needing verification: {missingFields.length ? missingFields.join(", ") : "none"}
           </p>
-          <div className="badge-row">
-            {opportunity.recommendation_reasons.map((reason) => <span className="badge changed-badge" key={reason}>{reason}</span>)}
-            {opportunity.risk_flags.map((flag) => <span className="badge" key={flag}>{flag}</span>)}
-            {opportunity.change_types.map((change) => <span className="badge new-badge" key={change}>{change}</span>)}
-          </div>
+          {badgeCount ? (
+            <div className="badge-row">
+              {recommendationReasons.map((reason) => <span className="badge changed-badge" key={reason}>{reason}</span>)}
+              {riskFlags.map((flag) => <span className="badge" key={flag}>{flag}</span>)}
+              {changeTypes.map((change) => <span className="badge new-badge" key={change}>{change}</span>)}
+            </div>
+          ) : (
+            <p className="muted">No additional flags</p>
+          )}
           {opportunity.unavailable_reason ? <p className="danger-text">Unavailable reason: {opportunity.unavailable_reason}</p> : null}
           <div className="drawer-url">
             <span className="section-label">Canonical URL</span>

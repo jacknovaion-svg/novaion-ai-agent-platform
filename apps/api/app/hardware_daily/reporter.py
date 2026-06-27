@@ -117,7 +117,7 @@ class TelegramHardwareDailyReporter:
             unit = f"${item.cost_per_unit:,.2f}/unit" if item.cost_per_unit else "单件成本 unknown"
             model = item.model or "型号 unknown"
             location = ", ".join(part for part in [item.location_city, item.location_state] if part) or "地点 unknown"
-            risk = ", ".join(item.recommendation_reasons[:4]) or "needs_manual_review"
+            risk = ", ".join((item.recommendation_reasons or [])[:4]) or "needs_manual_review"
             lines.extend(
                 [
                     f"{index}. [{item.category.value}] {item.title[:96]}",

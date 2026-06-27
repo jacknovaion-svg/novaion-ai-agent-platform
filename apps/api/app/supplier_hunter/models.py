@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 
 
 def utc_now() -> datetime:
@@ -75,6 +75,16 @@ class SupplierSearchCriteria(BaseModel):
     direct_asset_purchasing: bool | None = None
     raw_user_query_zh: str | None = None
     parsed_summary_zh: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_legacy_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        for field_name in ["supplier_types", "equipment_types", "certifications"]:
+            if data.get(field_name) is None:
+                data[field_name] = []
+        return data
 
 
 class SupplierSearchRequest(BaseModel):
@@ -176,6 +186,18 @@ class SupplierResult(BaseModel):
     quality_flags: list[str] = Field(default_factory=list)
     raw_data_json: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def apply_legacy_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        for field_name in ["equipment_types", "score_reasons", "quality_flags"]:
+            if data.get(field_name) is None:
+                data[field_name] = []
+        if data.get("raw_data_json") is None:
+            data["raw_data_json"] = {}
+        return data
+
 
 class SupplierQualityStats(BaseModel):
     raw_results: int = 0
@@ -207,4 +229,3 @@ class SupplierSearchJob(BaseModel):
 class SupplierReviewRequest(BaseModel):
     status: SupplierReviewStatus
     notes: str | None = None
-
