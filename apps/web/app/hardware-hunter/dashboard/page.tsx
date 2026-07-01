@@ -768,8 +768,8 @@ function OpportunityTable({
           </tr>
         </thead>
         <tbody>
-          {rows.slice(0, compact ? 12 : rows.length).map((item) => (
-            <tr key={`${item.opportunity_id}-${item.source_url}`}>
+          {rows.slice(0, compact ? 12 : rows.length).map((item, index) => (
+            <tr key={stableOpportunityKey(item, index)}>
               <td>
                 <span className="score-ring">{item.opportunity_score.toFixed(0)}</span>
               </td>
@@ -808,8 +808,8 @@ function BadgeRow({ item }: { item: HardwareOpportunity }) {
   if (!badges.length) return null;
   return (
     <div className="badge-row">
-      {badges.map((badge) => (
-        <span className={`badge ${badge === "NEW" ? "new-badge" : badge.includes("CHANGED") ? "changed-badge" : ""}`} key={badge}>
+      {badges.map((badge, index) => (
+        <span className={`badge ${badge === "NEW" ? "new-badge" : badge.includes("CHANGED") ? "changed-badge" : ""}`} key={`${badge}-${index}`}>
           {badge}
         </span>
       ))}
@@ -937,9 +937,9 @@ function OpportunityDrawer({
           </p>
           {badgeCount ? (
             <div className="badge-row">
-              {recommendationReasons.map((reason) => <span className="badge changed-badge" key={reason}>{reason}</span>)}
-              {riskFlags.map((flag) => <span className="badge" key={flag}>{flag}</span>)}
-              {changeTypes.map((change) => <span className="badge new-badge" key={change}>{change}</span>)}
+              {recommendationReasons.map((reason, index) => <span className="badge changed-badge" key={`reason-${reason}-${index}`}>{reason}</span>)}
+              {riskFlags.map((flag, index) => <span className="badge" key={`risk-${flag}-${index}`}>{flag}</span>)}
+              {changeTypes.map((change, index) => <span className="badge new-badge" key={`change-${change}-${index}`}>{change}</span>)}
             </div>
           ) : (
             <p className="muted">No additional flags</p>
@@ -1059,6 +1059,12 @@ function uniqueOpportunities(opportunities: HardwareOpportunity[]) {
     output.push(item);
   }
   return output;
+}
+
+function stableOpportunityKey(item: HardwareOpportunity, index = 0) {
+  return item.opportunity_id
+    || `${normalizeOpportunityUrl(item.canonical_url ?? item.source_url)}-${index}`
+    || `${item.source}-${item.title}-${index}`;
 }
 
 function normalizeOpportunityUrl(url: string | null | undefined) {
