@@ -33,7 +33,7 @@ const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "
 const tabs = ["overview", "opportunities", "source runs", "telegram reports"] as const;
 type Tab = (typeof tabs)[number];
 type SortBy = "score" | "newest" | "price" | "auction" | "risk";
-type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "expired" | "missing_components" | "pickup_only";
+type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "history" | "missing_components" | "pickup_only";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
 type ScanPreset =
   | "full_hardware_scan"
@@ -149,13 +149,18 @@ export default function HardwareDashboardPage() {
   const [recheckSummary, setRecheckSummary] = useState<string | null>(null);
 
   const activeJobId = job?.id ?? dashboard?.latest_job?.id;
-  const dashboardOpportunities = [
-    ...(dashboard?.top_opportunities ?? []),
-    ...(dashboard?.history_opportunities ?? []),
-    ...(dashboard?.needs_review_opportunities ?? []),
-  ];
-  const opportunities = job?.opportunities?.length ? job.opportunities : dashboardOpportunities;
-  const topCurrentOpportunities = dashboard?.top_opportunities ?? job?.opportunities ?? [];
+  const allKnownOpportunities = useMemo(
+    () => uniqueOpportunities([
+      ...(dashboard?.top_opportunities ?? []),
+      ...(dashboard?.history_opportunities ?? []),
+      ...(dashboard?.needs_review_opportunities ?? []),
+      ...(job?.opportunities ?? []),
+    ]),
+    [dashboard?.history_opportunities, dashboard?.needs_review_opportunities, dashboard?.top_opportunities, job?.opportunities],
+  );
+  const currentOpportunities = useMemo(() => getCurrentOpportunities(allKnownOpportunities), [allKnownOpportunities]);
+  const needsReviewOpportunities = useMemo(() => getNeedsReviewOpportunities(allKnownOpportunities), [allKnownOpportunities]);
+  const historyOpportunities = useMemo(() => getHistoryOpportunities(allKnownOpportunities), [allKnownOpportunities]);
   const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
@@ -178,7 +183,14 @@ export default function HardwareDashboardPage() {
     return () => window.clearInterval(timer);
   }, [activeJobId, job?.status]);
 
-  const filteredOpportunities = useMemo(() => filterOpportunities(opportunities, opportunityFilter), [opportunities, opportunityFilter]);
+  const filteredOpportunities = useMemo(
+    () => filterOpportunities(allKnownOpportunities, opportunityFilter, {
+      current: currentOpportunities,
+      needsReview: needsReviewOpportunities,
+      history: historyOpportunities,
+    }),
+    [allKnownOpportunities, currentOpportunities, historyOpportunities, needsReviewOpportunities, opportunityFilter],
+  );
   const sortedOpportunities = useMemo(() => sortOpportunities(filteredOpportunities, sortBy), [filteredOpportunities, sortBy]);
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
   const scanProgress = useMemo(() => buildScanProgress(job), [job]);
@@ -197,8 +209,8 @@ export default function HardwareDashboardPage() {
     return "Run Scan Now";
   }, [busy, job?.status, scanProgress.isScanning]);
   const auctionEndingCount = useMemo(
-    () => opportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING")).length,
-    [opportunities],
+    () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING") || item.listing_status === "ending_soon").length,
+    [currentOpportunities],
   );
 
   async function refreshDashboard() {
@@ -523,10 +535,12 @@ export default function HardwareDashboardPage() {
       </section>
 
       <section className="metric-grid dashboard-metrics">
-        <Metric label="Final Opportunities" value={stats?.final_opportunities ?? dashboard?.active_opportunities ?? 0} />
+        <Metric label="Final Opportunities" value={currentOpportunities.length} />
         <Metric label="New" value={stats?.new_opportunities ?? 0} />
         <Metric label="Changed" value={stats?.changed_opportunities ?? 0} />
         <Metric label="Auction Ending" value={auctionEndingCount} />
+        <Metric label="Needs Review" value={needsReviewOpportunities.length} />
+        <Metric label="History" value={historyOpportunities.length} />
         <Metric label="Failed Sources" value={stats?.failed_sources ?? sourceSummary.failed} tone={sourceSummary.failed ? "danger" : "normal"} />
       </section>
 
@@ -545,13 +559,14 @@ export default function HardwareDashboardPage() {
               <div>
                 <div className="section-label">Top Opportunities</div>
                 <h2>Best current candidates</h2>
+                <p className="muted">Showing {Math.min(currentOpportunities.length, 12)} of {currentOpportunities.length} current opportunities</p>
               </div>
               <button className="button secondary" onClick={() => setActiveTab("opportunities")}>
                 View All
               </button>
             </div>
             <OpportunityTable
-              opportunities={sortOpportunities(topCurrentOpportunities, sortBy).slice(0, 12)}
+              opportunities={sortOpportunities(currentOpportunities, sortBy).slice(0, 12)}
               onView={setSelectedOpportunity}
               compact
             />
@@ -592,7 +607,7 @@ export default function HardwareDashboardPage() {
           <div className="panel-head">
             <div>
               <div className="section-label">Opportunities</div>
-              <h2>{sortedOpportunities.length} formal specific listings</h2>
+              <h2>{sortedOpportunities.length} {opportunityFilter === "history" ? "history records" : "formal specific listings"}</h2>
             </div>
             <label className="field compact-field sort-field">
               <span>Sort</span>
@@ -611,7 +626,7 @@ export default function HardwareDashboardPage() {
                 <option value="active">Active</option>
                 <option value="ending_soon">Ending Soon</option>
                 <option value="needs_review">Needs Review</option>
-                <option value="expired">Expired</option>
+                <option value="history">History</option>
                 <option value="missing_components">Missing Components</option>
                 <option value="pickup_only">Pickup Only</option>
               </select>
@@ -1023,17 +1038,126 @@ function sortOpportunities(opportunities: HardwareOpportunity[], sortBy: SortBy)
   });
 }
 
-function filterOpportunities(opportunities: HardwareOpportunity[], filter: OpportunityFilter) {
+function uniqueOpportunities(opportunities: HardwareOpportunity[]) {
+  const seen = new Set<string>();
+  const output: HardwareOpportunity[] = [];
+  for (const item of opportunities) {
+    const key = normalizeOpportunityUrl(item.canonical_url ?? item.source_url) || item.opportunity_id || item.title;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+}
+
+function normalizeOpportunityUrl(url: string | null | undefined) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString().replace(/\/$/, "");
+  } catch {
+    return url.split("?")[0].split("#")[0].replace(/\/$/, "");
+  }
+}
+
+function getCurrentOpportunities(opportunities: HardwareOpportunity[]) {
+  return opportunities.filter(isCurrentOpportunity);
+}
+
+function getNeedsReviewOpportunities(opportunities: HardwareOpportunity[]) {
+  return opportunities.filter((item) => isNeedsReviewOpportunity(item) && !isHistoryOpportunity(item));
+}
+
+function getHistoryOpportunities(opportunities: HardwareOpportunity[]) {
+  return opportunities.filter(isHistoryOpportunity);
+}
+
+function filterOpportunities(
+  opportunities: HardwareOpportunity[],
+  filter: OpportunityFilter,
+  buckets: { current: HardwareOpportunity[]; needsReview: HardwareOpportunity[]; history: HardwareOpportunity[] },
+) {
   return opportunities.filter((item) => {
-    if (filter === "current") return ["active", "ending_soon"].includes(item.listing_status) || (item.listing_status === "unknown" && !item.needs_manual_review);
-    if (filter === "active") return item.listing_status === "active";
-    if (filter === "ending_soon") return item.listing_status === "ending_soon";
-    if (filter === "needs_review") return item.needs_manual_review || ["unknown", "needs_manual_review"].includes(item.listing_status);
-    if (filter === "expired") return ["ended", "sold", "removed", "unavailable"].includes(item.listing_status);
+    if (filter === "current") return buckets.current.some((current) => current.opportunity_id === item.opportunity_id);
+    if (filter === "active") return item.listing_status === "active" && isCurrentOpportunity(item);
+    if (filter === "ending_soon") return item.listing_status === "ending_soon" && isCurrentOpportunity(item);
+    if (filter === "needs_review") return buckets.needsReview.some((review) => review.opportunity_id === item.opportunity_id);
+    if (filter === "history") return buckets.history.some((history) => history.opportunity_id === item.opportunity_id);
     if (filter === "missing_components") return ["missing_storage", "missing_memory", "missing_cpu", "missing_psu", "barebone", "mixed_lot"].includes(item.component_completeness);
     if (filter === "pickup_only") return item.pickup_only === true;
     return true;
   });
+}
+
+function isCurrentOpportunity(item: HardwareOpportunity) {
+  if (hasReviewBlocker(item) || hasPastEndTime(item)) return false;
+  if (item.listing_status === "active" || item.listing_status === "ending_soon") {
+    return !hasUnconfirmedBlockedSource(item);
+  }
+  if (item.listing_status !== "unknown") return false;
+  if (hasUnconfirmedBlockedSource(item) || hasClosedSignal(item)) return false;
+  if (!item.first_seen_at || !item.last_status_check_at) return false;
+  return isWithinHours(item.first_seen_at, 24) && isWithinHours(item.last_status_check_at, 24);
+}
+
+function isNeedsReviewOpportunity(item: HardwareOpportunity) {
+  if (item.end_time_verification === "conflicting") return true;
+  if (isHistoryOpportunity(item)) return false;
+  if (item.needs_manual_review || item.listing_status === "needs_manual_review") return true;
+  if (item.unavailable_reason || hasUnconfirmedBlockedSource(item)) return true;
+  if (item.listing_status === "unknown") return !isCurrentOpportunity(item);
+  return false;
+}
+
+function isHistoryOpportunity(item: HardwareOpportunity) {
+  if (item.end_time_verification === "conflicting") return false;
+  return ["ended", "sold", "removed", "unavailable"].includes(item.listing_status) || hasPastEndTime(item);
+}
+
+function hasReviewBlocker(item: HardwareOpportunity) {
+  return Boolean(
+    item.needs_manual_review
+      || item.listing_status === "needs_manual_review"
+      || item.listing_status === "unavailable"
+      || item.end_time_verification === "conflicting"
+      || item.unavailable_reason,
+  );
+}
+
+function confirmedEndTime(item: HardwareOpportunity) {
+  return item.end_time_utc ?? item.auction_end_time ?? item.calculated_end_time ?? null;
+}
+
+function hasPastEndTime(item: HardwareOpportunity) {
+  const endTime = confirmedEndTime(item);
+  return Boolean(endTime && Date.parse(endTime) <= Date.now());
+}
+
+function hasUnconfirmedBlockedSource(item: HardwareOpportunity) {
+  if (confirmedEndTime(item)) return false;
+  const source = item.source.toLowerCase();
+  const statusNote = [
+    item.unavailable_reason,
+    item.status_check_result,
+    item.status_check_error,
+    String(item.raw_data_json?.detail_parse_status ?? ""),
+    String(item.raw_data_json?.detail_error ?? ""),
+  ].join(" ").toLowerCase();
+  const blocked = ["blocked", "captcha", "403", "login", "unavailable"].some((token) => statusNote.includes(token));
+  return blocked || (source.includes("govdeals") && item.end_time_verification === "unknown");
+}
+
+function hasClosedSignal(item: HardwareOpportunity) {
+  const text = [item.status_check_result, item.unavailable_reason, item.raw_title, item.raw_description].join(" ").toLowerCase();
+  return ["auction ended", "closed", "sold", "no longer available", "removed"].some((token) => text.includes(token));
+}
+
+function isWithinHours(value: string, hours: number) {
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return false;
+  return Date.now() - parsed <= hours * 60 * 60 * 1000;
 }
 
 function summarizeSources(sourceRuns: HardwareSourceRun[]) {

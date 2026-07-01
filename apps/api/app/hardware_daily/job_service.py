@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -13,6 +13,7 @@ from app.hardware_daily.models import (
     HardwareQualityStats,
     HardwareResultPageType,
     HardwareSchedulerState,
+    AuctionEndVerificationLevel,
     ListingStatus,
     SchedulerStatus,
     HardwareScanJob,
@@ -351,28 +352,97 @@ class HardwareHunterDailyScheduler:
         return output, duplicates
 
     def _is_current_opportunity(self, opportunity) -> bool:
+        if self._has_review_blocker(opportunity) or self._has_past_end_time(opportunity):
+            return False
         if opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
+            if self._has_unconfirmed_blocked_source(opportunity):
+                return False
             return True
         if opportunity.listing_status == ListingStatus.UNKNOWN:
-            reference_time = opportunity.last_status_check_at or opportunity.first_seen_at
-            return bool(reference_time and utc_now() - reference_time <= timedelta(hours=24))
+            if self._has_unconfirmed_blocked_source(opportunity) or self._has_closed_signal(opportunity):
+                return False
+            if not opportunity.first_seen_at or not opportunity.last_status_check_at:
+                return False
+            return (
+                utc_now() - opportunity.first_seen_at <= timedelta(hours=24)
+                and utc_now() - opportunity.last_status_check_at <= timedelta(hours=24)
+            )
         return False
 
     def _is_needs_review_opportunity(self, opportunity) -> bool:
+        if opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING:
+            return True
+        if self._is_history_opportunity(opportunity):
+            return False
         if opportunity.listing_status == ListingStatus.NEEDS_MANUAL_REVIEW or opportunity.needs_manual_review:
             return True
+        if self._has_unconfirmed_blocked_source(opportunity) or opportunity.unavailable_reason:
+            return True
         if opportunity.listing_status == ListingStatus.UNKNOWN:
-            reference_time = opportunity.last_status_check_at or opportunity.first_seen_at
-            return bool(reference_time and utc_now() - reference_time > timedelta(hours=24))
+            return not self._is_current_opportunity(opportunity)
         return False
 
     def _is_history_opportunity(self, opportunity) -> bool:
+        if opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING:
+            return False
+        if self._has_past_end_time(opportunity):
+            return True
         return opportunity.listing_status in {
             ListingStatus.ENDED,
             ListingStatus.SOLD,
             ListingStatus.REMOVED,
             ListingStatus.UNAVAILABLE,
         }
+
+    def _has_review_blocker(self, opportunity) -> bool:
+        return bool(
+            opportunity.needs_manual_review
+            or opportunity.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE}
+            or opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING
+            or opportunity.unavailable_reason
+        )
+
+    def _confirmed_end_time(self, opportunity):
+        return opportunity.end_time_utc or opportunity.auction_end_time or opportunity.calculated_end_time
+
+    def _has_past_end_time(self, opportunity) -> bool:
+        end_time = self._confirmed_end_time(opportunity)
+        if not end_time:
+            return False
+        now = utc_now()
+        try:
+            return end_time <= now
+        except TypeError:
+            return end_time.replace(tzinfo=timezone.utc) <= now
+
+    def _has_unconfirmed_blocked_source(self, opportunity) -> bool:
+        if self._confirmed_end_time(opportunity):
+            return False
+        source = (opportunity.source or "").lower()
+        status_note = " ".join(
+            str(value or "").lower()
+            for value in [
+                opportunity.unavailable_reason,
+                opportunity.status_check_result,
+                opportunity.status_check_error,
+                opportunity.raw_data_json.get("detail_parse_status"),
+                opportunity.raw_data_json.get("detail_error"),
+            ]
+        )
+        blocked = any(token in status_note for token in ["blocked", "captcha", "403", "login", "unavailable"])
+        return blocked or ("govdeals" in source and opportunity.end_time_verification == AuctionEndVerificationLevel.UNKNOWN)
+
+    def _has_closed_signal(self, opportunity) -> bool:
+        text = " ".join(
+            str(value or "").lower()
+            for value in [
+                opportunity.status_check_result,
+                opportunity.unavailable_reason,
+                opportunity.raw_title,
+                opportunity.raw_description,
+            ]
+        )
+        return any(token in text for token in ["auction ended", "closed", "sold", "no longer available", "removed"])
 
     def _status_from_exception(self, exc: Exception) -> HardwareSourceRunStatus:
         message = str(exc).lower()

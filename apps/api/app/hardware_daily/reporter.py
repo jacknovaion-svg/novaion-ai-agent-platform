@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import timedelta
+from datetime import timedelta, timezone
 from typing import Any
 
 import httpx
 
 from app.core.config import get_settings
 from app.hardware_daily.models import (
+    AuctionEndVerificationLevel,
     HardwareDailyReport,
     HardwareScanJob,
     ListingStatus,
@@ -140,9 +141,55 @@ class TelegramHardwareDailyReporter:
         return "\n".join(lines)
 
     def _eligible_for_top_report(self, item) -> bool:
+        if self._has_review_blocker(item) or self._has_past_end_time(item):
+            return False
         if item.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
+            if self._has_unconfirmed_blocked_source(item):
+                return False
             return True
         if item.listing_status == ListingStatus.UNKNOWN and not item.needs_manual_review:
-            reference_time = item.last_status_check_at or item.first_seen_at
-            return bool(reference_time and utc_now() - reference_time <= timedelta(hours=48))
+            if self._has_unconfirmed_blocked_source(item) or not item.first_seen_at or not item.last_status_check_at:
+                return False
+            return (
+                utc_now() - item.first_seen_at <= timedelta(hours=24)
+                and utc_now() - item.last_status_check_at <= timedelta(hours=24)
+            )
         return False
+
+    def _has_review_blocker(self, item) -> bool:
+        return bool(
+            item.needs_manual_review
+            or item.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE}
+            or item.end_time_verification == AuctionEndVerificationLevel.CONFLICTING
+            or item.unavailable_reason
+        )
+
+    def _confirmed_end_time(self, item):
+        return item.end_time_utc or item.auction_end_time or item.calculated_end_time
+
+    def _has_past_end_time(self, item) -> bool:
+        end_time = self._confirmed_end_time(item)
+        if not end_time:
+            return False
+        now = utc_now()
+        try:
+            return end_time <= now
+        except TypeError:
+            return end_time.replace(tzinfo=timezone.utc) <= now
+
+    def _has_unconfirmed_blocked_source(self, item) -> bool:
+        if self._confirmed_end_time(item):
+            return False
+        source = (item.source or "").lower()
+        status_note = " ".join(
+            str(value or "").lower()
+            for value in [
+                item.unavailable_reason,
+                item.status_check_result,
+                item.status_check_error,
+                item.raw_data_json.get("detail_parse_status"),
+                item.raw_data_json.get("detail_error"),
+            ]
+        )
+        blocked = any(token in status_note for token in ["blocked", "captcha", "403", "login", "unavailable"])
+        return blocked or ("govdeals" in source and item.end_time_verification == AuctionEndVerificationLevel.UNKNOWN)
