@@ -47,7 +47,22 @@ class HardwareHunterDailyScheduler:
         self._active_tasks: set[UUID] = set()
         self._queued_tasks: set[UUID] = set()
         self._loop_task: asyncio.Task | None = None
+        self._recover_interrupted_job()
         self._refresh_next_run()
+
+    def _recover_interrupted_job(self) -> None:
+        if not self.scheduler_state.is_job_running or not self.scheduler_state.current_job_id:
+            return
+        job = hardware_daily_store.get_job(self.scheduler_state.current_job_id)
+        if job and job.status in {HardwareScanJobStatus.CREATED, HardwareScanJobStatus.RUNNING}:
+            job.status = HardwareScanJobStatus.FAILED
+            job.error_message = "Previous scan was interrupted before completion and was cleared on backend startup."
+            job.completed_at = utc_now()
+            hardware_daily_store.update_job(job)
+        self.scheduler_state.is_job_running = False
+        self.scheduler_state.current_job_id = None
+        self.scheduler_state.last_error = "Recovered interrupted scan from previous backend process."
+        hardware_daily_store.save_scheduler_state(self.scheduler_state)
 
     def start_background_loop(self) -> None:
         if self._loop_task and not self._loop_task.done():
@@ -257,7 +272,9 @@ class HardwareHunterDailyScheduler:
         raw_results: list[RawHardwareListing] = []
         web_adapter = self.adapters[0]
         manual_adapter = self.adapters[1]
-        for query in selected_queries:
+        semaphore = asyncio.Semaphore(4)
+
+        async def run_query(query) -> list[RawHardwareListing]:
             source_run = HardwareSourceRun(
                 source_name=query.source_group,
                 adapter_type=web_adapter.adapter_type,
@@ -269,23 +286,31 @@ class HardwareHunterDailyScheduler:
             job.source_runs.append(source_run)
             hardware_daily_store.update_job(job)
             try:
-                results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
-                raw_results.extend(results)
+                async with semaphore:
+                    results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
                 source_run.status = HardwareSourceRunStatus.SUCCESS
                 source_run.result_count = len(results)
                 query.status = HardwareSourceRunStatus.SUCCESS
                 query.result_count = len(results)
+                return results
             except asyncio.TimeoutError:
                 source_run.status = HardwareSourceRunStatus.TIMEOUT
                 source_run.error_message = "Source timed out without blocking the scan."
                 query.status = HardwareSourceRunStatus.TIMEOUT
+                return []
             except Exception as exc:
                 source_run.status = self._status_from_exception(exc)
                 source_run.error_message = str(exc)[:500]
                 query.status = source_run.status
+                return []
             finally:
                 source_run.completed_at = utc_now()
                 hardware_daily_store.update_job(job)
+
+        if selected_queries:
+            batches = await asyncio.gather(*(run_query(query) for query in selected_queries))
+            for results in batches:
+                raw_results.extend(results)
 
         if request.manual_urls or request.manual_text:
             for category in job.categories[:1]:

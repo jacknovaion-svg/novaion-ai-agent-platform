@@ -131,12 +131,12 @@ const stateLookup = new Map<string, string>(
 export default function HardwareDashboardPage() {
   const [dashboard, setDashboard] = useState<HardwareDashboard | null>(null);
   const [job, setJob] = useState<HardwareScanJob | null>(null);
-  const [selectedCategories, setSelectedCategories] = useState<HardwareCategory[]>(categories);
+  const [selectedCategories, setSelectedCategories] = useState<HardwareCategory[]>(["servers"]);
   const [selectedStates, setSelectedStates] = useState<string[]>(defaultStates);
   const [stateDraft, setStateDraft] = useState("");
   const [regionStrategy, setRegionStrategy] = useState<RegionStrategy>("priority_states");
-  const [scanPreset, setScanPreset] = useState<ScanPreset>("full_hardware_scan");
-  const [scanMode, setScanMode] = useState<DashboardScanMode>("both");
+  const [scanPreset, setScanPreset] = useState<ScanPreset>("servers_only");
+  const [scanMode, setScanMode] = useState<DashboardScanMode>("asset_listing_search");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -233,7 +233,7 @@ export default function HardwareDashboardPage() {
         states: regionStrategy === "all_us" ? [] : selectedStates,
         test_run: true,
         max_results_per_query: 3,
-        max_queries_per_category: 6,
+        max_queries_per_category: scanPreset === "full_hardware_scan" ? 4 : 2,
         send_telegram: false,
       });
       setJob(created);
