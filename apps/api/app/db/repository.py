@@ -16,7 +16,12 @@ class Repository:
         self.engine: Engine | None = None
         settings = get_settings()
         if settings.database_url:
-            self.engine = create_engine(settings.database_url, pool_pre_ping=True)
+            self.engine = create_engine(self._sqlalchemy_url(settings.database_url), pool_pre_ping=True)
+
+    def _sqlalchemy_url(self, database_url: str) -> str:
+        if database_url.startswith("postgresql://"):
+            return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return database_url
 
     def create_search_job(self, payload: SearchRequest, results: list[NormalizedResult]) -> UUID:
         if not self.engine:

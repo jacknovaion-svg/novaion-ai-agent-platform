@@ -78,8 +78,8 @@ class HardwareDailyPersistence:
                 mode="memory_fallback",
                 database_health="error",
                 database_url_configured=True,
-                warning=f"PostgreSQL unavailable; using local memory fallback. {str(exc)[:240]}",
-                error=str(exc)[:500],
+                warning=f"PostgreSQL unavailable; using local memory fallback. {self._safe_error(exc)[:240]}",
+                error=self._safe_error(exc)[:500],
             )
 
     @property
@@ -798,8 +798,9 @@ class HardwareDailyPersistence:
 
     def _mark_write_error(self, exc: Exception) -> None:
         self.status.database_health = "error"
-        self.status.warning = f"PostgreSQL write/read failed; using in-memory state for this operation. {str(exc)[:240]}"
-        self.status.error = str(exc)[:500]
+        safe_error = self._safe_error(exc)
+        self.status.warning = f"PostgreSQL write/read failed; using in-memory state for this operation. {safe_error[:240]}"
+        self.status.error = safe_error[:500]
 
     def _split_sql(self, sql: str) -> list[str]:
         return [statement.strip() for statement in sql.split(";") if statement.strip()]
@@ -808,6 +809,13 @@ class HardwareDailyPersistence:
         if database_url.startswith("postgresql://"):
             return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
         return database_url
+
+    def _safe_error(self, exc: Exception) -> str:
+        message = str(exc)
+        if self.settings.database_url:
+            message = message.replace(self.settings.database_url, "[DATABASE_URL_REDACTED]")
+        message = re.sub(r"(postgres(?:ql)?(?:\\+psycopg)?://[^:\\s/]+:)([^@\\s]+)(@)", r"\\1[REDACTED]\\3", message)
+        return message
 
     def _json_value(self, value, fallback):
         if value is None:
