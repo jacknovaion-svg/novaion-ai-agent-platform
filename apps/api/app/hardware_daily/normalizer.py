@@ -134,15 +134,20 @@ class HardwareListingNormalizer:
         )
 
     def opportunity_key(self, opportunity: HardwareOpportunity) -> str:
+        source = opportunity.source.lower().strip()
+        if opportunity.source_listing_id:
+            return f"{source}:listing:{opportunity.source_listing_id.lower().strip()}"
+        if opportunity.lot_number:
+            return f"{source}:lot:{opportunity.lot_number.lower().strip()}"
         canonical_url = opportunity.canonical_url or self.canonical_url(opportunity.source_url)
         parsed = urlparse(canonical_url)
         canonical = f"{parsed.netloc.lower().removeprefix('www.')}{parsed.path.rstrip('/')}"
         if parsed.query:
             canonical = f"{canonical}?{parsed.query}"
         if canonical:
-            return canonical
+            return f"url:{canonical}"
         parts = [opportunity.seller_name or "", opportunity.title, opportunity.model or "", opportunity.location_state or ""]
-        return "|".join(part.lower().strip() for part in parts if part)
+        return "text:" + "|".join(part.lower().strip() for part in parts if part)
 
     def canonical_url(self, url: str) -> str:
         parsed = urlparse(url)

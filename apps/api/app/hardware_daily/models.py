@@ -119,6 +119,8 @@ class HardwareChangeType(str, Enum):
     PRICE_CHANGED = "PRICE_CHANGED"
     QUANTITY_CHANGED = "QUANTITY_CHANGED"
     STATUS_CHANGED = "STATUS_CHANGED"
+    END_TIME_CHANGED = "END_TIME_CHANGED"
+    DETAILS_ENRICHED = "DETAILS_ENRICHED"
     AUCTION_ENDING = "AUCTION_ENDING"
     RELISTED = "RELISTED"
     SUPPLIER_DISCOVERED = "SUPPLIER_DISCOVERED"
@@ -436,6 +438,14 @@ class HardwareDashboard(BaseModel):
     scheduler: HardwareSchedulerState
     persistence_mode: str = "memory"
     persistence_warning: str | None = None
+    database_health: str = "unknown"
+    database_error: str | None = None
+    database_url_configured: bool = False
+    stored_opportunities: int = 0
+    stored_history_records: int = 0
+    stored_needs_review_records: int = 0
+    last_successful_database_write: datetime | None = None
+    migration_version: str | None = None
     top_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
     history_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
     needs_review_opportunities: list[HardwareOpportunity] = Field(default_factory=list)

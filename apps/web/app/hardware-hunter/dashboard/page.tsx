@@ -514,9 +514,20 @@ export default function HardwareDashboardPage() {
               <span>Last: {scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : "none"}</span>
               <span>Next: {scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : "paused"}</span>
               <div>
-                <button className="button secondary compact-button" onClick={() => setScheduler("pause")} disabled={busy}><Pause size={14} /> Pause</button>
-                <button className="button secondary compact-button" onClick={() => setScheduler("resume")} disabled={busy}><Play size={14} /> Resume</button>
+                {scheduler?.status === "running" ? (
+                  <button className="button secondary compact-button" onClick={() => setScheduler("pause")} disabled={busy}><Pause size={14} /> Pause</button>
+                ) : (
+                  <button className="button secondary compact-button" onClick={() => setScheduler("resume")} disabled={busy}><Play size={14} /> Resume</button>
+                )}
               </div>
+            </div>
+            <div className="mini-status-card">
+              <div className="section-label">Persistence / 持久化</div>
+              <strong>{dashboard?.persistence_mode ?? "memory_fallback"} · {databaseHealthLabel(dashboard)}</strong>
+              <span>Database configured / 数据库已配置: {dashboard?.database_url_configured ? "yes" : "no"}</span>
+              <span>Stored / 已保存: {dashboard?.stored_opportunities ?? 0} opportunities / {dashboard?.stored_history_records ?? 0} history / {dashboard?.stored_needs_review_records ?? 0} review</span>
+              <span>Last write / 最近写入: {dashboard?.last_successful_database_write ? new Date(dashboard.last_successful_database_write).toLocaleString() : "none"}</span>
+              <span>Migration / 数据库版本: {dashboard?.migration_version ?? "unknown"}</span>
             </div>
             <div className="mini-status-card">
               <div className="section-label">Telegram</div>
@@ -1203,6 +1214,13 @@ function buildScanProgress(job: HardwareScanJob | null) {
 function telegramStatus(dashboard: HardwareDashboard | null) {
   if (!dashboard?.telegram_enabled) return "Disabled";
   return "Enabled";
+}
+
+function databaseHealthLabel(dashboard: HardwareDashboard | null) {
+  if (dashboard?.database_health) return dashboard.database_health;
+  if (!dashboard?.database_url_configured) return "not_configured";
+  if (dashboard.persistence_mode === "postgresql") return "healthy";
+  return "error";
 }
 
 function regionStrategyDescription(strategy: RegionStrategy) {

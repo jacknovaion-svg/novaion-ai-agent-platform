@@ -13,6 +13,7 @@ from app.hardware_daily.models import (
     TelegramDeliveryLog,
     utc_now,
 )
+from app.hardware_daily.persistence import hardware_daily_persistence
 
 
 class HardwareDailyMemoryStore:
@@ -22,15 +23,20 @@ class HardwareDailyMemoryStore:
         self.price_history: list[HardwarePriceHistoryRecord] = []
         self.telegram_logs: list[TelegramDeliveryLog] = []
         self.scheduler_state_path = Path(__file__).resolve().parents[2] / "data" / "hardware_scheduler_state.json"
-        self.scheduler_state = self._load_scheduler_state()
+        self.scheduler_state = hardware_daily_persistence.load_scheduler_state() or self._load_scheduler_state()
+        if hardware_daily_persistence.enabled:
+            self.jobs.update(hardware_daily_persistence.load_jobs())
+            self.opportunities_by_key.update(hardware_daily_persistence.load_opportunities_by_key())
 
     def create_job(self, job: HardwareScanJob) -> HardwareScanJob:
         self.jobs[job.id] = job
+        hardware_daily_persistence.create_job(job)
         return job
 
     def update_job(self, job: HardwareScanJob) -> HardwareScanJob:
         job.updated_at = utc_now()
         self.jobs[job.id] = job
+        hardware_daily_persistence.save_scan_job(job)
         return job
 
     def get_job(self, job_id: UUID) -> HardwareScanJob | None:
@@ -40,6 +46,10 @@ class HardwareDailyMemoryStore:
         return sorted(self.jobs.values(), key=lambda job: job.created_at, reverse=True)
 
     def remember_opportunity(self, key: str, current: HardwareOpportunity) -> tuple[HardwareOpportunity, list[HardwareChangeType]]:
+        if hardware_daily_persistence.enabled:
+            saved, changes = hardware_daily_persistence.remember_opportunity(key, current)
+            self.opportunities_by_key[hardware_daily_persistence.identity_key(saved)] = saved
+            return saved, changes
         previous = self.opportunities_by_key.get(key)
         changes: list[HardwareChangeType] = []
         if previous is None:
@@ -65,9 +75,12 @@ class HardwareDailyMemoryStore:
 
     def add_telegram_log(self, log: TelegramDeliveryLog) -> TelegramDeliveryLog:
         self.telegram_logs.append(log)
+        hardware_daily_persistence.add_telegram_log(log)
         return log
 
     def has_telegram_message(self, scan_job_id: UUID, report_type: str, message_hash: str) -> bool:
+        if hardware_daily_persistence.enabled and hardware_daily_persistence.has_telegram_message(scan_job_id, report_type, message_hash):
+            return True
         return any(
             log.scan_job_id == scan_job_id
             and log.report_type == report_type
@@ -80,6 +93,7 @@ class HardwareDailyMemoryStore:
         self.scheduler_state = state
         self.scheduler_state_path.parent.mkdir(parents=True, exist_ok=True)
         self.scheduler_state_path.write_text(state.model_dump_json(indent=2), encoding="utf-8")
+        hardware_daily_persistence.save_scheduler_state(state)
         return state
 
     def _record_history(self, key: str, opportunity: HardwareOpportunity) -> None:

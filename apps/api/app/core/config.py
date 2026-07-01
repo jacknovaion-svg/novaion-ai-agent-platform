@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     api_cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     database_url: str | None = None
+    database_ssl_mode: str | None = None
+    database_pool_min: int = 1
+    database_pool_max: int = 5
     enable_live_scraping: bool = False
     enable_bestbuy_scraping: bool = False
     adapter_timeout_seconds: int = 60

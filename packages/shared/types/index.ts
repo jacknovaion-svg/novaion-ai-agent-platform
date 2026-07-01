@@ -213,6 +213,8 @@ export type HardwareChangeType =
   | "PRICE_CHANGED"
   | "QUANTITY_CHANGED"
   | "STATUS_CHANGED"
+  | "END_TIME_CHANGED"
+  | "DETAILS_ENRICHED"
   | "AUCTION_ENDING"
   | "RELISTED"
   | "SUPPLIER_DISCOVERED";
@@ -459,6 +461,14 @@ export interface HardwareDashboard {
   scheduler: HardwareSchedulerState;
   persistence_mode: string;
   persistence_warning?: string | null;
+  database_health: string;
+  database_error?: string | null;
+  database_url_configured: boolean;
+  stored_opportunities: number;
+  stored_history_records: number;
+  stored_needs_review_records: number;
+  last_successful_database_write?: string | null;
+  migration_version?: string | null;
   top_opportunities: HardwareOpportunity[];
   history_opportunities: HardwareOpportunity[];
   needs_review_opportunities: HardwareOpportunity[];

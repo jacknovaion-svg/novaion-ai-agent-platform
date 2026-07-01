@@ -151,6 +151,7 @@ class HardwareHunterDailyScheduler:
         return hardware_daily_store.get_job(job_id)
 
     def dashboard(self):
+        hardware_daily_persistence.refresh_counts()
         jobs = hardware_daily_store.list_jobs()
         latest = jobs[0] if jobs else None
         from app.hardware_daily.models import HardwareDashboard
@@ -176,6 +177,14 @@ class HardwareHunterDailyScheduler:
             scheduler=self.scheduler_state,
             persistence_mode=hardware_daily_persistence.status.mode,
             persistence_warning=hardware_daily_persistence.status.warning,
+            database_health=hardware_daily_persistence.status.database_health,
+            database_error=hardware_daily_persistence.status.error,
+            database_url_configured=hardware_daily_persistence.status.database_url_configured,
+            stored_opportunities=hardware_daily_persistence.status.stored_opportunities,
+            stored_history_records=hardware_daily_persistence.status.stored_history_records,
+            stored_needs_review_records=hardware_daily_persistence.status.stored_needs_review_records,
+            last_successful_database_write=hardware_daily_persistence.status.last_successful_write_at,
+            migration_version=hardware_daily_persistence.status.migration_version,
             top_opportunities=top,
             history_opportunities=sorted(history, key=lambda item: item.last_seen_at, reverse=True)[:80],
             needs_review_opportunities=sorted(needs_review, key=lambda item: item.last_seen_at, reverse=True)[:80],

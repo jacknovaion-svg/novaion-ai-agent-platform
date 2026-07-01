@@ -103,8 +103,8 @@ class ListingStatusRecheckService:
             item.last_status_check_at = now
             item.status_check_result = "manual_review_applied"
             item = self.scoring.score([item])[0]
-            hardware_daily_store.opportunities_by_key[key] = item
-            return item
+            saved, _ = hardware_daily_store.remember_opportunity(key, item)
+            return saved
         return None
 
     def _apply_status_rules(self, current: HardwareOpportunity, previous: HardwareOpportunity | None = None) -> HardwareOpportunity:
