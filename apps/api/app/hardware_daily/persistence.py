@@ -50,7 +50,10 @@ class HardwareDailyPersistence:
         if not self.settings.database_url:
             return
         try:
-            connect_args = {}
+            connect_args = {
+                "connect_timeout": 10,
+                "options": "-c statement_timeout=30000 -c lock_timeout=5000",
+            }
             if self.settings.database_ssl_mode:
                 connect_args["sslmode"] = self.settings.database_ssl_mode
             pool_min = max(1, self.settings.database_pool_min)
@@ -195,7 +198,10 @@ class HardwareDailyPersistence:
                 ).mappings()
                 output: dict[str, HardwareOpportunity] = {}
                 for row in rows:
-                    item = self._row_to_opportunity(dict(row))
+                    try:
+                        item = self._row_to_opportunity(dict(row))
+                    except Exception:
+                        continue
                     output[str(row.get("unique_key") or self.identity_key(item))] = item
                 return output
         except Exception as exc:
@@ -391,10 +397,25 @@ class HardwareDailyPersistence:
             connection.exec_driver_sql(
                 "create table if not exists schema_migrations (version text primary key, applied_at timestamptz not null default now())"
             )
-            for path in files:
+
+        with self.engine.connect() as connection:
+            applied_versions = {
+                row[0]
+                for row in connection.execute(text("select version from schema_migrations")).all()
+            }
+
+        if "20260701_hardware_hunter_v23_persistence" in applied_versions:
+            return
+
+        for path in files:
+            if path.stem in applied_versions:
+                continue
+            with self.engine.begin() as connection:
+                self._repair_schema_for_legacy_tables(connection)
                 sql = path.read_text(encoding="utf-8")
                 for statement in self._split_sql(sql):
                     connection.exec_driver_sql(statement)
+                self._repair_schema_for_legacy_tables(connection)
                 connection.execute(
                     text("insert into schema_migrations(version) values (:version) on conflict (version) do nothing"),
                     {"version": path.stem},
@@ -539,7 +560,7 @@ class HardwareDailyPersistence:
                 "total_price": opportunity.total_price,
                 "current_price": opportunity.current_price,
                 "bid_count": opportunity.bid_count,
-                "raw_data": opportunity.model_dump_json(mode="json"),
+                "raw_data": json.dumps(opportunity.model_dump(mode="json")),
                 "checked_at": opportunity.last_checked_at or utc_now(),
             },
         )
@@ -598,7 +619,7 @@ class HardwareDailyPersistence:
                     "new_end_time": current.end_time_utc,
                     "change_type": ",".join(change.value for change in changes),
                     "source": current.source,
-                    "raw_data": current.model_dump_json(mode="json"),
+                    "raw_data": json.dumps(current.model_dump(mode="json")),
                 },
             )
         if current.manual_result:
@@ -680,6 +701,24 @@ class HardwareDailyPersistence:
             if value is None or key in {"raw_data", "unique_key", "scan_job_id", "created_at", "updated_at"}:
                 continue
             payload[column_map.get(key, key)] = self._json_value(value, value)
+        for field_name in [
+            "source_listing_id",
+            "lot_number",
+            "source_url",
+            "canonical_url",
+            "title",
+            "raw_title",
+            "source",
+            "manufacturer",
+            "model",
+            "part_number",
+            "location_city",
+            "location_state",
+            "zip_code",
+            "seller_name",
+        ]:
+            if payload.get(field_name) is not None:
+                payload[field_name] = str(payload[field_name])
         return HardwareOpportunity.model_validate(payload)
 
     def _opportunity_params(self, unique_key: str, opportunity: HardwareOpportunity, payload: dict, scan_job_id: UUID | None) -> dict:
@@ -804,6 +843,95 @@ class HardwareDailyPersistence:
 
     def _split_sql(self, sql: str) -> list[str]:
         return [statement.strip() for statement in sql.split(";") if statement.strip()]
+
+    def _repair_schema_for_legacy_tables(self, connection) -> None:
+        connection.exec_driver_sql(
+            """
+            do $$
+            begin
+              if to_regclass('public.hardware_scan_jobs') is not null then
+                alter table hardware_scan_jobs
+                  add column if not exists generated_queries jsonb not null default '[]'::jsonb,
+                  add column if not exists scheduler_state jsonb;
+              end if;
+
+              if to_regclass('public.hardware_opportunities') is not null then
+                alter table hardware_opportunities
+                  add column if not exists scan_job_id uuid,
+                  add column if not exists subcategory text,
+                  add column if not exists canonical_url text,
+                  add column if not exists unique_key text,
+                  add column if not exists source_listing_id text,
+                  add column if not exists lot_number text,
+                  add column if not exists generation text,
+                  add column if not exists configuration text,
+                  add column if not exists quantity_status text not null default 'unknown',
+                  add column if not exists current_price numeric,
+                  add column if not exists current_total_cost numeric,
+                  add column if not exists buyer_premium text,
+                  add column if not exists buyer_premium_amount numeric,
+                  add column if not exists estimated_tax numeric,
+                  add column if not exists estimated_shipping numeric,
+                  add column if not exists estimated_landed_cost numeric,
+                  add column if not exists cost_per_unit numeric,
+                  add column if not exists cost_per_gb numeric,
+                  add column if not exists cost_confidence text not null default 'unknown',
+                  add column if not exists bid_count integer,
+                  add column if not exists condition text not null default 'unknown',
+                  add column if not exists working_status text not null default 'unknown',
+                  add column if not exists testing_status text not null default 'unknown',
+                  add column if not exists warranty_status text not null default 'unknown',
+                  add column if not exists listing_status text not null default 'unknown',
+                  add column if not exists end_time_verification text not null default 'unknown',
+                  add column if not exists end_time_raw text,
+                  add column if not exists end_time_timezone_raw text,
+                  add column if not exists end_time_utc timestamptz,
+                  add column if not exists end_time_user_timezone text,
+                  add column if not exists timezone_needs_verification boolean not null default false,
+                  add column if not exists countdown_raw_text text,
+                  add column if not exists countdown_captured_at timestamptz,
+                  add column if not exists calculated_end_time timestamptz,
+                  add column if not exists calculated_timezone text,
+                  add column if not exists calculation_confidence text,
+                  add column if not exists last_status_check_at timestamptz,
+                  add column if not exists next_status_check_at timestamptz,
+                  add column if not exists status_check_attempts integer not null default 0,
+                  add column if not exists status_check_result text,
+                  add column if not exists status_check_error text,
+                  add column if not exists automated_result jsonb not null default '{}'::jsonb,
+                  add column if not exists manual_result jsonb not null default '{}'::jsonb,
+                  add column if not exists final_status text not null default 'unknown',
+                  add column if not exists manual_end_time timestamptz,
+                  add column if not exists manual_timezone text,
+                  add column if not exists manual_status text,
+                  add column if not exists manual_notes text,
+                  add column if not exists verified_by text,
+                  add column if not exists verified_at timestamptz,
+                  add column if not exists page_type text not null default 'specific_listing',
+                  add column if not exists classification_reason text,
+                  add column if not exists component_completeness text not null default 'unknown',
+                  add column if not exists component_details jsonb not null default '{}'::jsonb,
+                  add column if not exists recommendation text not null default 'information_incomplete',
+                  add column if not exists recommendation_reasons jsonb not null default '[]'::jsonb,
+                  add column if not exists last_checked_at timestamptz,
+                  add column if not exists unavailable_reason text,
+                  add column if not exists needs_manual_review boolean not null default false,
+                  add column if not exists confidence_level text not null default 'needs_verification',
+                  add column if not exists change_types jsonb not null default '[]'::jsonb,
+                  add column if not exists score_reasons jsonb not null default '[]'::jsonb,
+                  add column if not exists raw_title text,
+                  add column if not exists raw_description text,
+                  add column if not exists raw_data_json jsonb not null default '{}'::jsonb,
+                  add column if not exists raw_data jsonb not null default '{}'::jsonb;
+              end if;
+
+              if to_regclass('public.telegram_delivery_logs') is not null then
+                alter table telegram_delivery_logs
+                  add column if not exists telegram_message_id text;
+              end if;
+            end $$;
+            """
+        )
 
     def _sqlalchemy_url(self, database_url: str) -> str:
         if database_url.startswith("postgresql://"):
