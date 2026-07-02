@@ -63,25 +63,6 @@ type ReviewFormPayload = {
 
 const sourceCount = 5;
 const defaultStates = ["TX", "CA", "GA"];
-const categoryLabels: Record<HardwareCategory, string> = {
-  servers: "Servers",
-  gpu: "GPU",
-  memory: "Memory",
-  storage: "HDD / SSD / NVMe",
-  cpu: "CPU",
-};
-const scanModeLabels: Record<DashboardScanMode, string> = {
-  asset_listing_search: "Asset Listings / 设备销售信息",
-  supplier_lead_search: "Supplier Leads / 供应商线索",
-  both: "Both / 两者都扫描",
-};
-const regionStrategies: Record<RegionStrategy, string> = {
-  all_us: "All US",
-  priority_states: "Priority States",
-  rotating_states: "Rotating States",
-  custom_states: "Custom States",
-};
-
 const usStates = [
   ["AL", "Alabama", "阿拉巴马州"],
   ["AK", "Alaska", "阿拉斯加州"],
@@ -228,19 +209,19 @@ export default function HardwareDashboardPage() {
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
   const scanProgress = useMemo(() => buildScanProgress(job), [job]);
   const coverageLabel = useMemo(
-    () => regionStrategy === "all_us" ? "All 50 States + Washington, D.C." : selectedStates.join(", "),
-    [regionStrategy, selectedStates],
+    () => regionStrategy === "all_us" ? t("coverageAllUs").replace("Coverage: ", "").replace("覆盖范围：", "") : selectedStates.join(", "),
+    [regionStrategy, selectedStates, t],
   );
   const estimatedTasks = useMemo(
     () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length),
     [regionStrategy, selectedStates.length, selectedCategories.length],
   );
   const runButtonLabel = useMemo(() => {
-    if (busy || scanProgress.isScanning) return "Scanning...";
-    if (job?.status === "completed" || job?.status === "partially_completed") return "Completed";
-    if (job?.status === "failed") return "Failed";
-    return "Run Scan Now";
-  }, [busy, job?.status, scanProgress.isScanning]);
+    if (busy || scanProgress.isScanning) return t("scanning");
+    if (job?.status === "completed" || job?.status === "partially_completed") return t("completed");
+    if (job?.status === "failed") return t("failed");
+    return t("runScanNow");
+  }, [busy, job?.status, scanProgress.isScanning, t]);
   const auctionEndingCount = useMemo(
     () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING") || item.listing_status === "ending_soon").length,
     [currentOpportunities],
@@ -494,38 +475,38 @@ export default function HardwareDashboardPage() {
       <section className="panel dashboard-control">
         <div className="scan-control-header">
           <div>
-            <div className="section-label">Hardware Hunter V2</div>
-            <h1 className="dashboard-title">退役IT资产扫描</h1>
+            <div className="section-label">{t("hardwareV2")}</div>
+            <h1 className="dashboard-title">{t("retiredItScan")}</h1>
           </div>
           <label className="field compact-field preset-field">
-            <span>Scan Preset</span>
+            <span>{t("scanPreset")}</span>
             <select className="select" value={scanPreset} onChange={(event) => applyPreset(event.target.value as ScanPreset)}>
-              <option value="full_hardware_scan">Full Hardware Scan</option>
-              <option value="servers_only">Servers Only</option>
-              <option value="gpu_memory">GPU + Memory</option>
-              <option value="government_auctions">Government Auctions</option>
-              <option value="data_center_decommissioning">Data Center Decommissioning</option>
-              <option value="supplier_discovery">Supplier Discovery</option>
-              <option value="custom">Custom</option>
+              <option value="full_hardware_scan">{t("fullHardwareScan")}</option>
+              <option value="servers_only">{t("serversOnly")}</option>
+              <option value="gpu_memory">{t("gpuMemory")}</option>
+              <option value="government_auctions">{t("governmentAuctions")}</option>
+              <option value="data_center_decommissioning">{t("dataCenterDecommissioning")}</option>
+              <option value="supplier_discovery">{t("supplierDiscovery")}</option>
+              <option value="custom">{t("custom")}</option>
             </select>
           </label>
         </div>
 
         <div className="scan-config-row">
           <label className="field compact-field">
-            <span>Region Strategy</span>
+            <span>{t("regionStrategy")}</span>
             <select className="select" value={regionStrategy} onChange={(event) => { setRegionStrategy(event.target.value as RegionStrategy); setScanPreset("custom"); }}>
-              {Object.entries(regionStrategies).map(([value, label]) => (
-                <option value={value} key={value}>{label}</option>
+              {(["all_us", "priority_states", "rotating_states", "custom_states"] as RegionStrategy[]).map((value) => (
+                <option value={value} key={value}>{regionStrategyLabel(value, t)}</option>
               ))}
             </select>
-            <small className="strategy-help">{regionStrategyDescription(regionStrategy)}</small>
+            <small className="strategy-help">{regionStrategyDescription(regionStrategy, t)}</small>
           </label>
 
           <div className="field compact-field state-picker">
-            <span>States</span>
+            <span>{t("states")}</span>
             {regionStrategy === "all_us" ? (
-              <div className="coverage-banner">Coverage: All 50 States + Washington, D.C.</div>
+              <div className="coverage-banner">{t("coverageAllUs")}</div>
             ) : (
               <>
                 <div className="state-chip-row">
@@ -544,29 +525,29 @@ export default function HardwareDashboardPage() {
                         addState();
                       }
                     }}
-                    placeholder="+ Add State"
+                    placeholder={t("addState")}
                   />
-                  <button className="button secondary compact-button" onClick={addState}>Add</button>
+                  <button className="button secondary compact-button" onClick={addState}>{t("add")}</button>
                 </div>
                 <div className="mini-actions">
-                  <button onClick={() => { setSelectedStates(allStateCodes); setScanPreset("custom"); }}>Select All</button>
-                  <button onClick={() => { setSelectedStates([]); setScanPreset("custom"); }}>Clear All</button>
+                  <button onClick={() => { setSelectedStates(allStateCodes); setScanPreset("custom"); }}>{t("selectAll")}</button>
+                  <button onClick={() => { setSelectedStates([]); setScanPreset("custom"); }}>{t("clearAll")}</button>
                 </div>
               </>
             )}
           </div>
 
           <label className="field compact-field">
-            <span>Scan Mode</span>
+            <span>{t("scanMode")}</span>
             <select className="select" value={scanMode} onChange={(event) => { setScanMode(event.target.value as DashboardScanMode); setScanPreset("custom"); }}>
-              {Object.entries(scanModeLabels).map(([value, label]) => (
-                <option value={value} key={value}>{label}</option>
+              {(["asset_listing_search", "supplier_lead_search", "both"] as DashboardScanMode[]).map((value) => (
+                <option value={value} key={value}>{scanModeLabel(value, t)}</option>
               ))}
             </select>
           </label>
 
           <div className="field compact-field categories-field">
-            <span>Categories</span>
+            <span>{t("categories")}</span>
             <div className="compact-category-row single-line">
               {categories.map((category) => (
                 <label className="compact-check" key={category}>
@@ -575,13 +556,13 @@ export default function HardwareDashboardPage() {
                     checked={selectedCategories.includes(category)}
                     onChange={() => { toggleCategory(category); setScanPreset("custom"); }}
                   />
-                  {categoryLabels[category]}
+                  {categoryLabel(category, t)}
                 </label>
               ))}
             </div>
             <div className="mini-actions">
-              <button onClick={() => { setSelectedCategories(categories); setScanPreset("custom"); }}>Select All</button>
-              <button onClick={() => { setSelectedCategories([]); setScanPreset("custom"); }}>Clear</button>
+              <button onClick={() => { setSelectedCategories(categories); setScanPreset("custom"); }}>{t("selectAll")}</button>
+              <button onClick={() => { setSelectedCategories([]); setScanPreset("custom"); }}>{t("clear")}</button>
             </div>
           </div>
         </div>
@@ -594,17 +575,17 @@ export default function HardwareDashboardPage() {
             </button>
             <button className="button secondary" onClick={refreshDashboard} disabled={busy}>
               <RefreshCw size={17} />
-              Refresh
+              {t("refresh")}
             </button>
             <button className="button secondary" onClick={bulkRecheck} disabled={busy}>
-              Recheck Listings
+              {t("recheckListings")}
             </button>
             <div className="scan-summary">
-              {coverageLabel || "No states"} · {selectedCategories.length} categories · {sourceCount} sources · {estimatedTasks} estimated tasks
+              {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {sourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
             </div>
             {scanProgress.isScanning ? (
               <div className="scan-progress">
-                <span>{scanProgress.completed}/{scanProgress.total} tasks</span>
+                <span>{scanProgress.completed}/{scanProgress.total} {t("tasks")}</span>
                 <span>{scanProgress.currentCategory} · {scanProgress.currentSource}</span>
                 <span>{scanProgress.elapsed}</span>
               </div>
@@ -613,33 +594,33 @@ export default function HardwareDashboardPage() {
 
           <div className="status-card-row">
             <div className="mini-status-card">
-              <div className="section-label">Scheduler</div>
-              <strong>{scheduler?.status ?? "paused"}</strong>
-              <span>Last: {scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : "none"}</span>
-              <span>Next: {scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : "paused"}</span>
+              <div className="section-label">{t("scheduler")}</div>
+              <strong>{scheduler?.status === "running" ? t("running") : t("paused")}</strong>
+              <span>{t("last")}: {scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : t("none")}</span>
+              <span>{t("next")}: {scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : t("paused")}</span>
               <div>
                 {scheduler?.status === "running" ? (
-                  <button className="button secondary compact-button" onClick={() => setScheduler("pause")} disabled={busy}><Pause size={14} /> Pause</button>
+                  <button className="button secondary compact-button" onClick={() => setScheduler("pause")} disabled={busy}><Pause size={14} /> {t("pause")}</button>
                 ) : (
-                  <button className="button secondary compact-button" onClick={() => setScheduler("resume")} disabled={busy}><Play size={14} /> Resume</button>
+                  <button className="button secondary compact-button" onClick={() => setScheduler("resume")} disabled={busy}><Play size={14} /> {t("resume")}</button>
                 )}
               </div>
             </div>
             <div className="mini-status-card">
-              <div className="section-label">Persistence / 持久化</div>
+              <div className="section-label">{t("persistence")}</div>
               <strong>{dashboard?.persistence_mode ?? "memory_fallback"} · {databaseHealthLabel(dashboard)}</strong>
-              <span>Database configured / 数据库已配置: {dashboard?.database_url_configured ? "yes" : "no"}</span>
-              <span>Stored / 已保存: {dashboard?.stored_opportunities ?? 0} opportunities / {dashboard?.stored_history_records ?? 0} history / {dashboard?.stored_needs_review_records ?? 0} review</span>
-              <span>Last write / 最近写入: {dashboard?.last_successful_database_write ? new Date(dashboard.last_successful_database_write).toLocaleString() : "none"}</span>
-              <span>Migration / 数据库版本: {dashboard?.migration_version ?? "unknown"}</span>
+              <span>{t("databaseConfigured")}: {dashboard?.database_url_configured ? t("yes") : t("no")}</span>
+              <span>{t("stored")}: {dashboard?.stored_opportunities ?? 0} {t("opportunities")} / {dashboard?.stored_history_records ?? 0} {t("history")} / {dashboard?.stored_needs_review_records ?? 0} {t("review")}</span>
+              <span>{t("lastWrite")}: {dashboard?.last_successful_database_write ? new Date(dashboard.last_successful_database_write).toLocaleString() : t("none")}</span>
+              <span>{t("migration")}: {dashboard?.migration_version ?? t("unknown")}</span>
             </div>
             <div className="mini-status-card">
-              <div className="section-label">Telegram</div>
-              <strong>{telegramStatus(dashboard)}</strong>
-              <span>Last delivery: {report?.delivery_log?.status ?? "none"}</span>
+              <div className="section-label">{t("telegram")}</div>
+              <strong>{telegramStatus(dashboard, t)}</strong>
+              <span>{t("lastDelivery")}: {report?.delivery_log?.status ?? t("none")}</span>
               <div>
-                <button className="button secondary compact-button" onClick={() => setActiveTab("telegram reports")}>Configure</button>
-                <button className="button secondary compact-button" onClick={() => generateReport("test")} disabled={busy || !activeJobId}><Send size={14} /> Test</button>
+                <button className="button secondary compact-button" onClick={() => setActiveTab("telegram reports")}>{t("configure")}</button>
+                <button className="button secondary compact-button" onClick={() => generateReport("test")} disabled={busy || !activeJobId}><Send size={14} /> {t("test")}</button>
               </div>
             </div>
           </div>
@@ -652,14 +633,14 @@ export default function HardwareDashboardPage() {
       <section className="panel compact-panel">
         <div className="panel-head">
           <div>
-            <div className="section-label">Result Scope / 结果范围</div>
-            <h2>{resultScopeTitle(resultScope)}</h2>
+            <div className="section-label">{t("resultScope")}</div>
+            <h2>{resultScopeTitle(resultScope, t)}</h2>
             <p className="muted">
               {resultScope === "current_scan"
-                ? `Scan Job: ${latestJobId ?? "none"} · Scanned States: ${(latestJob?.states ?? []).join(", ") || "All / unknown"} · Scan Time: ${latestJob?.created_at ? new Date(latestJob.created_at).toLocaleString() : "none"}`
+                ? `${t("scanJob")}: ${latestJobId ?? t("none")} · ${t("scannedStates")}: ${(latestJob?.states ?? []).join(", ") || t("allUnknown")} · ${t("scanTime")}: ${latestJob?.created_at ? new Date(latestJob.created_at).toLocaleString() : t("none")}`
                 : resultScope === "all_current"
-                  ? "Showing all active and ending-soon opportunities currently stored in the database."
-                  : "Showing opportunities filtered by selected state."}
+                  ? t("showingAllCurrent")
+                  : t("showingSelectedStates")}
             </p>
           </div>
           <div className="dashboard-actions no-margin">
@@ -670,7 +651,7 @@ export default function HardwareDashboardPage() {
                 if ((latestJob?.states ?? []).length === 1) setStateFilter(latestJob?.states[0] ?? "all");
               }}
             >
-              Current Scan / 本次扫描
+              {t("currentScan")}
             </button>
             <button
               className={`button secondary ${resultScope === "all_current" ? "active" : ""}`}
@@ -679,7 +660,7 @@ export default function HardwareDashboardPage() {
                 setStateFilter("all");
               }}
             >
-              All Current / 全部当前机会
+              {t("allCurrent")}
             </button>
             <button
               className={`button secondary ${resultScope === "selected_states" ? "active" : ""}`}
@@ -688,12 +669,12 @@ export default function HardwareDashboardPage() {
                 setStateFilter("all");
               }}
             >
-              Selected States / 当前选择州
+              {t("selectedStates")}
             </button>
             <label className="field compact-field sort-field">
-              <span>State Filter</span>
+              <span>{t("stateFilter")}</span>
               <select className="select" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
-                <option value="all">All States</option>
+                <option value="all">{t("allStates")}</option>
                 {availableStateFilters.map((state) => (
                   <option value={state} key={state}>{state}</option>
                 ))}
@@ -704,13 +685,13 @@ export default function HardwareDashboardPage() {
       </section>
 
       <section className="metric-grid dashboard-metrics">
-        <Metric label="Final Opportunities" value={currentOpportunities.length} />
-        <Metric label="New" value={scopedNewCount} />
-        <Metric label="Changed" value={scopedChangedCount} />
-        <Metric label="Auction Ending" value={auctionEndingCount} />
-        <Metric label="Needs Review" value={needsReviewOpportunities.length} />
-        <Metric label="History" value={historyOpportunities.length} />
-        <Metric label="Failed Sources" value={stats?.failed_sources ?? sourceSummary.failed} tone={sourceSummary.failed ? "danger" : "normal"} />
+        <Metric label={t("finalOpportunities")} value={currentOpportunities.length} />
+        <Metric label={t("new")} value={scopedNewCount} />
+        <Metric label={t("changed")} value={scopedChangedCount} />
+        <Metric label={t("auctionEnding")} value={auctionEndingCount} />
+        <Metric label={t("needsReview")} value={needsReviewOpportunities.length} />
+        <Metric label={t("history")} value={historyOpportunities.length} />
+        <Metric label={t("failedSources")} value={stats?.failed_sources ?? sourceSummary.failed} tone={sourceSummary.failed ? "danger" : "normal"} />
       </section>
 
       <nav className="dashboard-tabs">
@@ -726,18 +707,19 @@ export default function HardwareDashboardPage() {
           <section className="panel compact-panel">
             <div className="panel-head">
               <div>
-                <div className="section-label">Top Opportunities</div>
-                <h2>{resultScopeTitle(resultScope)}</h2>
-                <p className="muted">Showing {Math.min(currentOpportunities.length, 12)} of {currentOpportunities.length} current opportunities</p>
+                <div className="section-label">{t("topOpportunities")}</div>
+                <h2>{resultScopeTitle(resultScope, t)}</h2>
+                <p className="muted">{Math.min(currentOpportunities.length, 12)} / {currentOpportunities.length} {t("current")}</p>
               </div>
               <button className="button secondary" onClick={() => setActiveTab("opportunities")}>
-                View All
+                {t("viewAll")}
               </button>
             </div>
             <OpportunityTable
               opportunities={sortOpportunities(currentOpportunities, sortBy).slice(0, 12)}
               onView={setSelectedOpportunity}
               emptyMessage={emptyOpportunityMessage(resultScope, latestJob?.states ?? [], stateFilter)}
+              t={t}
               compact
             />
           </section>
@@ -745,26 +727,26 @@ export default function HardwareDashboardPage() {
           <section className="panel compact-panel">
             <div className="panel-head">
               <div>
-                <div className="section-label">Source Runs</div>
+                <div className="section-label">{t("sourceRuns")}</div>
                 <h2>
-                  {sourceSummary.successful} Sources Successful / {sourceSummary.zero} Zero Results / {sourceSummary.failed} Failed
+                  {sourceSummary.successful} / {sourceSummary.zero} / {sourceSummary.failed} · {t("sourceSummary")}
                 </h2>
               </div>
               <button className="button secondary" onClick={() => setShowSources((value) => !value)}>
-                {showSources ? "Collapse Source Runs" : "View Source Runs"}
+                {showSources ? t("collapseSourceRuns") : t("viewSourceRuns")}
               </button>
             </div>
-            {showSources ? <SourceRunsTable sourceRuns={sourceRuns} /> : null}
+            {showSources ? <SourceRunsTable sourceRuns={sourceRuns} t={t} /> : null}
           </section>
 
           <section className="panel compact-panel">
             <div className="panel-head">
               <div>
-                <div className="section-label">Quality Details</div>
-                <h2>{stats?.raw_results ?? 0} raw / {stats?.specific_listings ?? 0} specific / {stats?.duplicates_removed ?? 0} duplicate</h2>
+                <div className="section-label">{t("qualityDetails")}</div>
+                <h2>{stats?.raw_results ?? 0} {t("raw")} / {stats?.specific_listings ?? 0} {t("specific")} / {stats?.duplicates_removed ?? 0} {t("duplicate")}</h2>
               </div>
               <button className="button secondary" onClick={() => setShowQuality((value) => !value)}>
-                {showQuality ? "Hide Quality Details" : "Quality Details"}
+                {showQuality ? t("hideQualityDetails") : t("qualityDetails")}
               </button>
             </div>
             {showQuality ? <QualityDetails stats={stats} /> : null}
@@ -776,29 +758,29 @@ export default function HardwareDashboardPage() {
         <section className="panel compact-panel">
           <div className="panel-head">
             <div>
-              <div className="section-label">Opportunities</div>
-              <h2>{sortedOpportunities.length} {opportunityFilter === "history" ? "history records" : "formal specific listings"}</h2>
+              <div className="section-label">{t("opportunities")}</div>
+              <h2>{sortedOpportunities.length} {opportunityFilter === "history" ? t("historyRecords") : t("formalSpecificListings")}</h2>
             </div>
             <label className="field compact-field sort-field">
-              <span>Sort</span>
+              <span>{t("sort")}</span>
               <select className="select" value={sortBy} onChange={(event) => setSortBy(event.target.value as SortBy)}>
-                <option value="score">Score</option>
-                <option value="newest">Newest</option>
-                <option value="price">Price</option>
-                <option value="auction">Auction End Time</option>
-                <option value="risk">Risk</option>
+                <option value="score">{t("score")}</option>
+                <option value="newest">{t("newest")}</option>
+                <option value="price">{t("price")}</option>
+                <option value="auction">{t("endTime")}</option>
+                <option value="risk">{t("risk")}</option>
               </select>
             </label>
             <label className="field compact-field sort-field">
-              <span>Filter</span>
+              <span>{t("filter")}</span>
               <select className="select" value={opportunityFilter} onChange={(event) => setOpportunityFilter(event.target.value as OpportunityFilter)}>
-                <option value="current">Current</option>
-                <option value="active">Active</option>
-                <option value="ending_soon">Ending Soon</option>
-                <option value="needs_review">Needs Review</option>
-                <option value="history">History</option>
-                <option value="missing_components">Missing Components</option>
-                <option value="pickup_only">Pickup Only</option>
+                <option value="current">{t("current")}</option>
+                <option value="active">{t("active")}</option>
+                <option value="ending_soon">{t("endingSoon")}</option>
+                <option value="needs_review">{t("needsReview")}</option>
+                <option value="history">{t("history")}</option>
+                <option value="missing_components">{t("missingComponents")}</option>
+                <option value="pickup_only">{t("pickupOnly")}</option>
               </select>
             </label>
           </div>
@@ -806,6 +788,7 @@ export default function HardwareDashboardPage() {
             opportunities={sortedOpportunities}
             onView={setSelectedOpportunity}
             emptyMessage={emptyOpportunityMessage(resultScope, latestJob?.states ?? [], stateFilter)}
+            t={t}
           />
         </section>
       ) : null}
@@ -841,16 +824,16 @@ export default function HardwareDashboardPage() {
         <section className="panel compact-panel">
           <div className="panel-head">
             <div>
-              <div className="section-label">Source Runs</div>
+              <div className="section-label">{t("sourceRuns")}</div>
               <h2>
-                {sourceSummary.successful} successful / {sourceSummary.zero} zero / {sourceSummary.failed} failed
+                {sourceSummary.successful} / {sourceSummary.zero} / {sourceSummary.failed} · {t("sourceSummary")}
               </h2>
             </div>
             <button className="button secondary" onClick={() => setShowSources((value) => !value)}>
-              {showSources ? "Collapse Source Runs" : "View Source Runs"}
+              {showSources ? t("collapseSourceRuns") : t("viewSourceRuns")}
             </button>
           </div>
-          {showSources ? <SourceRunsTable sourceRuns={sourceRuns} /> : <p className="muted">Source run details are collapsed by default.</p>}
+          {showSources ? <SourceRunsTable sourceRuns={sourceRuns} t={t} /> : <p className="muted">{t("sourceRunsCollapsed")}</p>}
         </section>
       ) : null}
 
@@ -858,21 +841,21 @@ export default function HardwareDashboardPage() {
         <section className="panel compact-panel">
           <div className="panel-head">
             <div>
-              <div className="section-label">Telegram Reports</div>
-              <h2>Preview, test, approve</h2>
+              <div className="section-label">{t("telegramReports")}</div>
+              <h2>{t("previewDailyReport")}</h2>
             </div>
             <div className="dashboard-actions no-margin">
               <button className="button secondary" onClick={() => generateReport("preview")} disabled={busy || !activeJobId}>
                 <Bell size={17} />
-                Preview Daily Report
+                {t("previewDailyReport")}
               </button>
               <button className="button secondary" onClick={() => generateReport("test")} disabled={busy || !activeJobId}>
                 <Send size={17} />
-                Send Test Message
+                {t("sendTestMessage")}
               </button>
               <button className="button gold" onClick={() => generateReport("approve_and_send")} disabled={busy || !activeJobId}>
                 <Send size={17} />
-                Approve and Send
+                {t("approveAndSend")}
               </button>
             </div>
           </div>
@@ -880,7 +863,7 @@ export default function HardwareDashboardPage() {
             <StatusPill label="Delivery" value={report?.delivery_log?.status ?? "none"} />
             <StatusPill label="Message ID" value={report?.delivery_log?.telegram_message_id ?? "none"} />
             <button className="button secondary" onClick={() => setTelegramOpen(true)} disabled={!report}>
-              Open Preview
+              {t("openPreview")}
             </button>
           </div>
           {report?.delivery_log?.error_message ? <p className="danger-text">{report.delivery_log.error_message}</p> : null}
@@ -933,11 +916,13 @@ function StatusPill({ label, value }: { label: string; value: string }) {
 function OpportunityTable({
   opportunities,
   onView,
+  t,
   emptyMessage = "No formal specific listings yet.",
   compact = false,
 }: {
   opportunities: HardwareOpportunity[];
   onView: (opportunity: HardwareOpportunity) => void;
+  t: (key: string) => string;
   emptyMessage?: string;
   compact?: boolean;
 }) {
@@ -950,20 +935,20 @@ function OpportunityTable({
       <table className="compact-table opportunity-table">
         <thead>
           <tr>
-            <th>Score</th>
-            <th>Category</th>
-            <th>Title</th>
-            <th>Model</th>
-            <th>End Time</th>
-            <th>Time Left</th>
-            <th>Quantity</th>
-            <th>Current Price</th>
-            <th>Unit Cost</th>
-            <th>Location</th>
-            <th>Completeness</th>
-            <th>Status</th>
-            <th>Verification</th>
-            <th>Action</th>
+            <th>{t("score")}</th>
+            <th>{t("category")}</th>
+            <th>{t("title")}</th>
+            <th>{t("model")}</th>
+            <th>{t("endTime")}</th>
+            <th>{t("timeLeft")}</th>
+            <th>{t("quantity")}</th>
+            <th>{t("currentPrice")}</th>
+            <th>{t("unitCost")}</th>
+            <th>{t("location")}</th>
+            <th>{t("completeness")}</th>
+            <th>{t("status")}</th>
+            <th>{t("verification")}</th>
+            <th>{t("action")}</th>
           </tr>
         </thead>
         <tbody>
@@ -972,26 +957,26 @@ function OpportunityTable({
               <td>
                 <span className="score-ring">{item.opportunity_score.toFixed(0)}</span>
               </td>
-              <td>{item.category}</td>
+              <td>{categoryLabel(item.category, t)}</td>
               <td>
                 <div className="title-cell">
                   <span>{item.title}</span>
                   <BadgeRow item={item} />
                 </div>
               </td>
-              <td>{item.model ?? <span className="muted">Unknown</span>}</td>
-              <td>{formatEndTime(item)}</td>
-              <td>{timeLeftLabel(item)}</td>
-              <td>{item.quantity ?? <span className="muted">Unknown</span>}</td>
-              <td>{formatMoney(item.current_total_cost ?? item.total_price)}</td>
-              <td>{formatMoney(item.cost_per_unit ?? item.unit_price)}</td>
-              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">Unknown</span>}</td>
-              <td><span className="pill">{item.component_completeness}</span></td>
-              <td><span className="pill">{item.listing_status}</span></td>
-              <td>{verificationBadge(item)}</td>
+              <td>{item.model ?? <span className="muted">{t("unknown")}</span>}</td>
+              <td>{formatEndTime(item, t)}</td>
+              <td>{timeLeftLabel(item, t)}</td>
+              <td>{item.quantity ?? <span className="muted">{t("unknown")}</span>}</td>
+              <td>{formatMoney(item.current_total_cost ?? item.total_price, t)}</td>
+              <td>{formatMoney(item.cost_per_unit ?? item.unit_price, t)}</td>
+              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">{t("unknown")}</span>}</td>
+              <td><span className="pill">{completenessLabel(item.component_completeness, t)}</span></td>
+              <td><span className="pill">{statusLabel(item.listing_status, t)}</span></td>
+              <td>{verificationBadge(item, t)}</td>
               <td>
                 <button className="button secondary compact-button" onClick={() => onView(item)}>
-                  View
+                  {t("viewDetails")}
                 </button>
               </td>
             </tr>
@@ -1027,7 +1012,7 @@ function NeedsReviewTable({
             <th>{t("state")}</th>
             <th>{t("category")}</th>
             <th>{t("reason")}</th>
-            <th>End Time</th>
+            <th>{t("endTime")}</th>
             <th>{t("price")}</th>
             <th>{t("quantity")}</th>
             <th>{t("lastChecked")}</th>
@@ -1046,8 +1031,8 @@ function NeedsReviewTable({
               <td>{safeText(item.location_state, t)}</td>
               <td>{safeText(item.category, t)}</td>
               <td>{reasonLabel(reviewReason(item), t)}</td>
-              <td>{formatEndTime(item)}</td>
-              <td>{formatMoney(item.final_price ?? item.current_total_cost ?? item.total_price)}</td>
+              <td>{formatEndTime(item, t)}</td>
+              <td>{formatMoney(item.final_price ?? item.current_total_cost ?? item.total_price, t)}</td>
               <td>{item.final_quantity ?? item.quantity ?? t("unknown")}</td>
               <td>{formatDate(item.last_checked_at)}</td>
               <td>{statusLabel(item.listing_status, t)}</td>
@@ -1078,17 +1063,17 @@ function BadgeRow({ item }: { item: HardwareOpportunity }) {
   );
 }
 
-function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
+function SourceRunsTable({ sourceRuns, t }: { sourceRuns: HardwareSourceRun[]; t: (key: string) => string }) {
   const rows = sourceRuns ?? [];
   return (
     <div className="table-wrap compact-table-wrap">
       <table className="compact-table source-table">
         <thead>
           <tr>
-            <th>Source</th>
-            <th>Category</th>
-            <th>Status</th>
-            <th>Results</th>
+            <th>{t("source")}</th>
+            <th>{t("category")}</th>
+            <th>{t("status")}</th>
+            <th>{t("results")}</th>
             <th>Query</th>
           </tr>
         </thead>
@@ -1102,7 +1087,7 @@ function SourceRunsTable({ sourceRuns }: { sourceRuns: HardwareSourceRun[] }) {
               <td className="muted truncate-query" title={run.query ?? ""}>{run.query ?? "-"}</td>
             </tr>
           ))}
-          {!rows.length ? <tr><td colSpan={5} className="muted">No source runs yet.</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={5} className="muted">{t("noRecords")}</td></tr> : null}
         </tbody>
       </table>
     </div>
@@ -1486,10 +1471,10 @@ function normalizeStateCode(value?: string | null) {
   return stateLookup.get(value.trim().toLowerCase()) ?? value.trim().toUpperCase();
 }
 
-function resultScopeTitle(scope: ResultScope) {
-  if (scope === "current_scan") return "Current Scan Opportunities";
-  if (scope === "all_current") return "All Current Opportunities";
-  return "Selected States Opportunities";
+function resultScopeTitle(scope: ResultScope, t: (key: string) => string) {
+  if (scope === "current_scan") return t("currentScanOpportunities");
+  if (scope === "all_current") return t("allCurrentOpportunities");
+  return t("selectedStatesOpportunities");
 }
 
 function emptyOpportunityMessage(scope: ResultScope, states: string[], stateFilter: string) {
@@ -1633,10 +1618,10 @@ function summarizeSources(sourceRuns: HardwareSourceRun[]) {
 
 function tabLabel(tab: Tab, t: (key: string) => string) {
   if (tab === "needs review") return t("needsReview");
-  if (tab === "source runs") return "Source Runs";
-  if (tab === "telegram reports") return "Telegram Reports";
-  if (tab === "opportunities") return "Opportunities";
-  return "Overview";
+  if (tab === "source runs") return t("sourceRuns");
+  if (tab === "telegram reports") return t("telegramReports");
+  if (tab === "opportunities") return t("opportunities");
+  return t("overview");
 }
 
 function buildReviewStats(needsReview: HardwareOpportunity[], history: HardwareOpportunity[]) {
@@ -1676,6 +1661,21 @@ function statusLabel(value: string | null | undefined, t: (key: string) => strin
     ended: t("statusEnded"),
     sold: t("statusSold"),
     unavailable: t("statusUnavailable"),
+    unknown: t("unknown"),
+  };
+  return labels[value || "unknown"] ?? value ?? t("unknown");
+}
+
+function completenessLabel(value: string | null | undefined, t: (key: string) => string) {
+  const labels: Record<string, string> = {
+    complete: t("statusActive"),
+    mostly_complete: t("mostlyComplete"),
+    missing_storage: t("missingComponents"),
+    missing_memory: t("missingComponents"),
+    missing_cpu: t("missingComponents"),
+    missing_psu: t("missingComponents"),
+    barebone: t("barebone"),
+    mixed_lot: t("mixedLot"),
     unknown: t("unknown"),
   };
   return labels[value || "unknown"] ?? value ?? t("unknown");
@@ -1753,9 +1753,39 @@ function buildScanProgress(job: HardwareScanJob | null) {
   };
 }
 
-function telegramStatus(dashboard: HardwareDashboard | null) {
-  if (!dashboard?.telegram_enabled) return "Disabled";
-  return "Enabled";
+function categoryLabel(category: HardwareCategory, t: (key: string) => string) {
+  const labels: Record<HardwareCategory, string> = {
+    servers: t("servers"),
+    gpu: t("gpuShort"),
+    memory: t("memory"),
+    storage: t("storageDevices"),
+    cpu: t("cpuShort"),
+  };
+  return labels[category];
+}
+
+function scanModeLabel(mode: DashboardScanMode, t: (key: string) => string) {
+  const labels: Record<DashboardScanMode, string> = {
+    asset_listing_search: t("assetListings"),
+    supplier_lead_search: t("supplierLeads"),
+    both: t("bothScan"),
+  };
+  return labels[mode];
+}
+
+function regionStrategyLabel(strategy: RegionStrategy, t: (key: string) => string) {
+  const labels: Record<RegionStrategy, string> = {
+    all_us: t("allUs"),
+    priority_states: t("priorityStates"),
+    rotating_states: t("rotatingStates"),
+    custom_states: t("customStates"),
+  };
+  return labels[strategy];
+}
+
+function telegramStatus(dashboard: HardwareDashboard | null, t: (key: string) => string) {
+  if (!dashboard?.telegram_enabled) return t("disabled");
+  return t("enabled");
 }
 
 function databaseHealthLabel(dashboard: HardwareDashboard | null) {
@@ -1765,11 +1795,11 @@ function databaseHealthLabel(dashboard: HardwareDashboard | null) {
   return "error";
 }
 
-function regionStrategyDescription(strategy: RegionStrategy) {
-  if (strategy === "all_us") return "National platforms scan all US; local sources follow task policy.";
-  if (strategy === "priority_states") return "Scan selected priority states first.";
-  if (strategy === "rotating_states") return "Rotate a subset of states each daily run.";
-  return "Use only the states selected below.";
+function regionStrategyDescription(strategy: RegionStrategy, t: (key: string) => string) {
+  if (strategy === "all_us") return t("strategyAllUs");
+  if (strategy === "priority_states") return t("strategyPriority");
+  if (strategy === "rotating_states") return t("strategyRotating");
+  return t("strategyCustom");
 }
 
 function fieldsNeedingVerification(item: HardwareOpportunity) {
@@ -1784,8 +1814,8 @@ function fieldsNeedingVerification(item: HardwareOpportunity) {
   return fields;
 }
 
-function formatMoney(value?: number | null) {
-  return value ? `$${value.toLocaleString()}` : "Unknown";
+function formatMoney(value?: number | null, t?: (key: string) => string) {
+  return value ? `$${value.toLocaleString()}` : t ? t("unknown") : "Unknown";
 }
 
 function formatDate(value?: string | null) {
@@ -1796,35 +1826,41 @@ function formatShortDate(value?: string | null) {
   return value ? new Date(value).toLocaleDateString() : "Unknown";
 }
 
-function formatEndTime(item: HardwareOpportunity) {
+function formatEndTime(item: HardwareOpportunity, t?: (key: string) => string) {
   const value = item.end_time_utc ?? item.auction_end_time;
-  if (!value) return "Unknown";
+  if (!value) return t ? t("unknown") : "Unknown";
   const rawZone = item.end_time_timezone_raw ? ` ${item.end_time_timezone_raw}` : "";
   return `${new Date(value).toLocaleString()}${rawZone}`;
 }
 
-function timeLeftLabel(item: HardwareOpportunity) {
+function timeLeftLabel(item: HardwareOpportunity, t?: (key: string) => string) {
   if (item.time_remaining) return item.time_remaining;
   const value = item.end_time_utc ?? item.auction_end_time;
-  if (!value) return <span className="muted">Unknown</span>;
+  if (!value) return <span className="muted">{t ? t("unknown") : "Unknown"}</span>;
   const ms = Date.parse(value) - Date.now();
-  if (ms <= 0) return "Ended";
+  if (ms <= 0) return t ? t("statusEnded") : "Ended";
   const hours = Math.floor(ms / 3600000);
   const minutes = Math.floor((ms % 3600000) / 60000);
   return `${hours}h ${minutes}m`;
 }
 
-function verificationBadge(item: HardwareOpportunity) {
+function verificationBadge(item: HardwareOpportunity, t: (key: string) => string) {
   if (item.needs_manual_review || item.listing_status === "needs_manual_review") {
-    return <span className="badge changed-badge">needs review</span>;
+    return <span className="badge changed-badge">{t("requiresReview")}</span>;
   }
   if (item.end_time_verification === "unknown") {
-    return <span className="badge">unknown</span>;
+    return <span className="badge">{t("unknown")}</span>;
   }
   if (item.end_time_verification === "conflicting") {
-    return <span className="badge changed-badge">conflicting</span>;
+    return <span className="badge changed-badge">{t("conflicting")}</span>;
   }
-  return <span className="badge new-badge">{item.end_time_verification}</span>;
+  const labels: Record<string, string> = {
+    source_confirmed: t("sourceConfirmed"),
+    manually_verified: t("manuallyVerified"),
+    countdown_estimated: t("countdownEstimated"),
+    secondary_source_confirmed: t("secondarySourceConfirmed"),
+  };
+  return <span className="badge new-badge">{labels[item.end_time_verification] ?? item.end_time_verification}</span>;
 }
 
 function pickupShipping(item: HardwareOpportunity) {

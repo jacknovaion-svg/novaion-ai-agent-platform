@@ -9,7 +9,7 @@ import type { Language } from "@novaion/shared/types";
 
 const nav = [
   { href: "/", label: "search", icon: Search },
-  { href: "/hardware-hunter/dashboard", label: "Hardware V2", icon: Radar },
+  { href: "/hardware-hunter/dashboard", label: "hardwareV2", icon: Radar },
   { href: "/site-hunter", label: "siteHunter", icon: Building2 },
   { href: "/results", label: "results", icon: Database },
   { href: "/saved-searches", label: "savedSearches", icon: Bookmark },
@@ -71,12 +71,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <strong>{path.startsWith("/site-hunter") ? t("siteHunter") : path.startsWith("/supplier-hunter") ? t("supplierHunter") : t("hardwareHunter")}</strong>
             <div className="muted">
               {path.startsWith("/site-hunter")
-                ? "Industrial site discovery agent"
+                ? t("siteHunterDesc")
                 : path.startsWith("/supplier-hunter")
-                  ? "ITAD and enterprise hardware supplier discovery"
+                  ? t("supplierHunterDesc")
                   : path.startsWith("/hardware-hunter/dashboard")
-                    ? "Daily retired IT asset discovery and Telegram reporting"
-                  : "AI procurement search agent"}
+                    ? t("hardwareHunterDesc")
+                  : t("procurementSearchDesc")}
             </div>
           </div>
           <label className="field" style={{ minWidth: 150 }}>
