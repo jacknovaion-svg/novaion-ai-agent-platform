@@ -159,7 +159,7 @@ class TelegramHardwareDailyReporter:
     def _has_review_blocker(self, item) -> bool:
         return bool(
             item.needs_manual_review
-            or item.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE}
+            or item.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE, ListingStatus.IGNORED}
             or item.end_time_verification == AuctionEndVerificationLevel.CONFLICTING
             or item.unavailable_reason
         )

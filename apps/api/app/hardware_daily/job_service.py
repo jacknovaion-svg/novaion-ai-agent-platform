@@ -225,6 +225,33 @@ class HardwareHunterDailyScheduler:
     def manual_status_review(self, opportunity_id: UUID, payload):
         return listing_status_recheck_service.apply_manual_review(str(opportunity_id), payload)
 
+    async def bulk_manual_review(self, payload):
+        from app.hardware_daily.models import HardwareBulkReviewResult, HardwareManualStatusReviewRequest
+
+        result = HardwareBulkReviewResult()
+        for opportunity_id in payload.opportunity_ids:
+            try:
+                if payload.review_action == "recheck":
+                    updated = await self.recheck_opportunity(opportunity_id)
+                else:
+                    status = payload.manual_status or ListingStatus.NEEDS_MANUAL_REVIEW
+                    updated = listing_status_recheck_service.apply_manual_review(
+                        str(opportunity_id),
+                        HardwareManualStatusReviewRequest(
+                            manual_status=status,
+                            review_action=payload.review_action,
+                            review_notes=payload.review_notes,
+                            verified_by=payload.verified_by,
+                        ),
+                    )
+                if updated:
+                    result.updated += 1
+                else:
+                    result.failed += 1
+            except Exception:
+                result.failed += 1
+        return result
+
     def scheduler_status(self) -> HardwareSchedulerState:
         self._refresh_next_run()
         return self.scheduler_state
@@ -426,12 +453,13 @@ class HardwareHunterDailyScheduler:
             ListingStatus.SOLD,
             ListingStatus.REMOVED,
             ListingStatus.UNAVAILABLE,
+            ListingStatus.IGNORED,
         }
 
     def _has_review_blocker(self, opportunity) -> bool:
         return bool(
             opportunity.needs_manual_review
-            or opportunity.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE}
+            or opportunity.listing_status in {ListingStatus.NEEDS_MANUAL_REVIEW, ListingStatus.UNAVAILABLE, ListingStatus.IGNORED}
             or opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING
             or opportunity.unavailable_reason
         )

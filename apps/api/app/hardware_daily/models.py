@@ -73,6 +73,7 @@ class ListingStatus(str, Enum):
     REMOVED = "removed"
     UNAVAILABLE = "unavailable"
     NEEDS_MANUAL_REVIEW = "needs_manual_review"
+    IGNORED = "ignored"
     UNKNOWN = "unknown"
 
 
@@ -244,6 +245,19 @@ class HardwareOpportunity(BaseModel):
     automated_result: dict[str, Any] = Field(default_factory=dict)
     manual_result: dict[str, Any] = Field(default_factory=dict)
     final_status: ListingStatus = ListingStatus.UNKNOWN
+    final_end_time: datetime | None = None
+    final_price: float | None = None
+    final_quantity: int | None = None
+    manual_quantity: int | None = None
+    manual_current_price: float | None = None
+    manual_total_price: float | None = None
+    manual_location: str | None = None
+    manual_condition: str | None = None
+    manual_component_completeness: str | None = None
+    review_action: str | None = None
+    review_notes: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
     manual_end_time: datetime | None = None
     manual_timezone: str | None = None
     manual_status: ListingStatus | None = None
@@ -379,8 +393,29 @@ class HardwareManualStatusReviewRequest(BaseModel):
     manual_status: ListingStatus
     manual_end_time: datetime | None = None
     manual_timezone: str | None = None
+    manual_quantity: int | None = None
+    manual_current_price: float | None = None
+    manual_total_price: float | None = None
+    manual_location: str | None = None
+    manual_condition: str | None = None
+    manual_component_completeness: str | None = None
+    review_action: str | None = None
+    review_notes: str | None = None
     manual_notes: str | None = None
     verified_by: str | None = "local_user"
+
+
+class HardwareBulkReviewRequest(BaseModel):
+    opportunity_ids: list[UUID]
+    review_action: str
+    manual_status: ListingStatus | None = None
+    review_notes: str | None = None
+    verified_by: str | None = "local_user"
+
+
+class HardwareBulkReviewResult(BaseModel):
+    updated: int = 0
+    failed: int = 0
 
 
 class HardwareListingRecheckSummary(BaseModel):

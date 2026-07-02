@@ -9,6 +9,7 @@ from app.hardware_daily.models import (
     HardwareManualStatusReviewRequest,
     HardwareOpportunity,
     HardwareResultPageType,
+    ComponentCompleteness,
     ListingStatus,
     RawHardwareListing,
     utc_now,
@@ -78,17 +79,37 @@ class ListingStatusRecheckService:
             if str(item.opportunity_id) != opportunity_id:
                 continue
             now = utc_now()
+            previous_status = item.listing_status
             item.manual_status = payload.manual_status
             item.manual_end_time = payload.manual_end_time
             item.manual_timezone = payload.manual_timezone
+            item.manual_quantity = payload.manual_quantity
+            item.manual_current_price = payload.manual_current_price
+            item.manual_total_price = payload.manual_total_price
+            item.manual_location = payload.manual_location
+            item.manual_condition = payload.manual_condition
+            item.manual_component_completeness = payload.manual_component_completeness
             item.manual_notes = payload.manual_notes
+            item.review_notes = payload.review_notes or payload.manual_notes
+            item.review_action = payload.review_action or payload.manual_status.value
+            item.reviewed_by = payload.verified_by
+            item.reviewed_at = now
             item.verified_by = payload.verified_by
             item.verified_at = now
             item.manual_result = {
+                "previous_status": previous_status.value,
                 "manual_status": payload.manual_status.value,
                 "manual_end_time": payload.manual_end_time.isoformat() if payload.manual_end_time else None,
                 "manual_timezone": payload.manual_timezone,
+                "manual_quantity": payload.manual_quantity,
+                "manual_current_price": payload.manual_current_price,
+                "manual_total_price": payload.manual_total_price,
+                "manual_location": payload.manual_location,
+                "manual_condition": payload.manual_condition,
+                "manual_component_completeness": payload.manual_component_completeness,
                 "manual_notes": payload.manual_notes,
+                "review_action": item.review_action,
+                "review_notes": item.review_notes,
                 "verified_by": payload.verified_by,
                 "verified_at": now.isoformat(),
             }
@@ -97,9 +118,29 @@ class ListingStatusRecheckService:
                 item.end_time_utc = payload.manual_end_time
                 item.auction_end_time = payload.manual_end_time
                 item.end_time_user_timezone = payload.manual_end_time.isoformat()
+            if payload.manual_quantity is not None:
+                item.quantity = payload.manual_quantity
+            if payload.manual_current_price is not None:
+                item.current_price = payload.manual_current_price
+            if payload.manual_total_price is not None:
+                item.total_price = payload.manual_total_price
+                item.current_total_cost = payload.manual_total_price
+            if payload.manual_condition:
+                item.working_status = payload.manual_condition
+            if payload.manual_component_completeness:
+                try:
+                    item.component_completeness = ComponentCompleteness(payload.manual_component_completeness)
+                except ValueError:
+                    item.component_completeness = ComponentCompleteness.UNKNOWN
             item.listing_status = payload.manual_status
             item.final_status = payload.manual_status
+            item.final_end_time = payload.manual_end_time or item.end_time_utc
+            item.final_price = payload.manual_total_price or payload.manual_current_price or item.total_price or item.current_price
+            item.final_quantity = payload.manual_quantity or item.quantity
             item.needs_manual_review = payload.manual_status == ListingStatus.NEEDS_MANUAL_REVIEW
+            if payload.manual_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
+                item.unavailable_reason = None
+                item.status_check_error = None
             item.last_status_check_at = now
             item.status_check_result = "manual_review_applied"
             item = self.scoring.score([item])[0]

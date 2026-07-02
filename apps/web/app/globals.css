@@ -965,6 +965,27 @@ th {
   overflow-wrap: anywhere;
 }
 
+.review-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.review-form-grid input,
+.review-form-grid textarea,
+.review-form-grid select {
+  width: 100%;
+}
+
+.review-notes-field {
+  grid-column: 1 / -1;
+}
+
+.review-notes-field textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
 .drawer-url {
   border: 1px solid var(--line);
   border-radius: 6px;

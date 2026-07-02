@@ -11,6 +11,8 @@ from app.hardware_daily.models import (
     HardwareDashboard,
     HardwareListingRecheckSummary,
     HardwareManualStatusReviewRequest,
+    HardwareBulkReviewRequest,
+    HardwareBulkReviewResult,
     HardwareOpportunity,
     HardwareScanJob,
     HardwareScanRequest,
@@ -61,6 +63,11 @@ def update_hardware_manual_status(opportunity_id: UUID, payload: HardwareManualS
     if not opportunity:
         raise HTTPException(status_code=404, detail="Hardware opportunity not found")
     return opportunity
+
+
+@router.post("/daily-scan/opportunities/bulk-review", response_model=HardwareBulkReviewResult)
+async def bulk_review_hardware_opportunities(payload: HardwareBulkReviewRequest) -> HardwareBulkReviewResult:
+    return await hardware_daily_scheduler.bulk_manual_review(payload)
 
 
 @router.post("/daily-scan/jobs/{job_id}/telegram-report", response_model=HardwareDailyReport)

@@ -290,6 +290,7 @@ export interface HardwareOpportunity {
     | "removed"
     | "unavailable"
     | "needs_manual_review"
+    | "ignored"
     | "unknown";
   end_time_verification:
     | "source_confirmed"
@@ -323,7 +324,21 @@ export interface HardwareOpportunity {
     | "removed"
     | "unavailable"
     | "needs_manual_review"
+    | "ignored"
     | "unknown";
+  final_end_time?: string | null;
+  final_price?: number | null;
+  final_quantity?: number | null;
+  manual_quantity?: number | null;
+  manual_current_price?: number | null;
+  manual_total_price?: number | null;
+  manual_location?: string | null;
+  manual_condition?: string | null;
+  manual_component_completeness?: string | null;
+  review_action?: string | null;
+  review_notes?: string | null;
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
   manual_end_time?: string | null;
   manual_timezone?: string | null;
   manual_status?: string | null;
@@ -485,6 +500,11 @@ export interface HardwareListingRecheckSummary {
   needs_manual_review: number;
   conflicting: number;
   errors: number;
+}
+
+export interface HardwareBulkReviewResult {
+  updated: number;
+  failed: number;
 }
 
 export type SiteHunterJobStatus =

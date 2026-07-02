@@ -8,6 +8,7 @@ import type {
   SiteSearchAnchor,
   SupplierSearchJob,
   HardwareDashboard,
+  HardwareBulkReviewResult,
   HardwareDailyReport,
   HardwareListingRecheckSummary,
   HardwareOpportunity,
@@ -277,6 +278,14 @@ export async function updateHardwareOpportunityManualStatus(
     manual_status: string;
     manual_end_time?: string | null;
     manual_timezone?: string | null;
+    manual_quantity?: number | null;
+    manual_current_price?: number | null;
+    manual_total_price?: number | null;
+    manual_location?: string | null;
+    manual_condition?: string | null;
+    manual_component_completeness?: string | null;
+    review_action?: string | null;
+    review_notes?: string | null;
     manual_notes?: string | null;
     verified_by?: string | null;
   },
@@ -287,6 +296,22 @@ export async function updateHardwareOpportunityManualStatus(
     body: JSON.stringify(payload),
   });
   if (!response.ok) throw new Error("Manual status update failed");
+  return response.json();
+}
+
+export async function bulkReviewHardwareOpportunities(payload: {
+  opportunity_ids: string[];
+  review_action: string;
+  manual_status?: string | null;
+  review_notes?: string | null;
+  verified_by?: string | null;
+}): Promise<HardwareBulkReviewResult> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/opportunities/bulk-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error("Bulk review failed");
   return response.json();
 }
 

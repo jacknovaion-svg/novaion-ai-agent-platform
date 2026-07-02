@@ -455,6 +455,14 @@ class HardwareDailyPersistence:
                   last_updated_job_id = coalesce(last_updated_job_id, scan_job_id)
                 where scan_job_id is not null
                   and (first_seen_job_id is null or last_seen_job_id is null or last_updated_job_id is null);
+
+                alter table manual_verification_records
+                  add column if not exists previous_status text,
+                  add column if not exists review_action text,
+                  add column if not exists manual_fields_json jsonb not null default '{}'::jsonb,
+                  add column if not exists notes text,
+                  add column if not exists reviewed_by text,
+                  add column if not exists reviewed_at timestamptz;
                 """
             )
 
@@ -668,26 +676,47 @@ class HardwareDailyPersistence:
                 },
             )
         if current.manual_result:
-            connection.execute(
-                text(
-                    """
-                    insert into manual_verification_records
-                      (opportunity_id, manual_status, manual_end_time, manual_timezone, manual_notes, verified_by, verified_at, raw_data)
-                    values
-                      (:opportunity_id, :manual_status, :manual_end_time, :manual_timezone, :manual_notes, :verified_by, :verified_at, cast(:raw_data as jsonb))
-                    """
-                ),
-                {
-                    "opportunity_id": str(current.opportunity_id),
-                    "manual_status": current.manual_status.value if current.manual_status else None,
-                    "manual_end_time": current.manual_end_time,
-                    "manual_timezone": current.manual_timezone,
-                    "manual_notes": current.manual_notes,
-                    "verified_by": current.verified_by,
-                    "verified_at": current.verified_at,
-                    "raw_data": json.dumps(current.manual_result),
-                },
-            )
+                connection.execute(
+                    text(
+                        """
+                        insert into manual_verification_records
+                          (opportunity_id, previous_status, manual_status, review_action, manual_fields_json,
+                           manual_end_time, manual_timezone, manual_notes, notes, verified_by, reviewed_by, verified_at, reviewed_at, raw_data)
+                        values
+                          (:opportunity_id, :previous_status, :manual_status, :review_action, cast(:manual_fields_json as jsonb),
+                           :manual_end_time, :manual_timezone, :manual_notes, :notes, :verified_by, :reviewed_by, :verified_at, :reviewed_at, cast(:raw_data as jsonb))
+                        """
+                    ),
+                    {
+                        "opportunity_id": str(current.opportunity_id),
+                        "previous_status": current.manual_result.get("previous_status"),
+                        "manual_status": current.manual_status.value if current.manual_status else None,
+                        "review_action": current.review_action,
+                        "manual_fields_json": json.dumps(
+                            {
+                                "manual_quantity": current.manual_quantity,
+                                "manual_current_price": current.manual_current_price,
+                                "manual_total_price": current.manual_total_price,
+                                "manual_location": current.manual_location,
+                                "manual_condition": current.manual_condition,
+                                "manual_component_completeness": current.manual_component_completeness,
+                                "final_status": current.final_status.value,
+                                "final_end_time": current.final_end_time.isoformat() if current.final_end_time else None,
+                                "final_price": current.final_price,
+                                "final_quantity": current.final_quantity,
+                            }
+                        ),
+                        "manual_end_time": current.manual_end_time,
+                        "manual_timezone": current.manual_timezone,
+                        "manual_notes": current.manual_notes,
+                        "notes": current.review_notes or current.manual_notes,
+                        "verified_by": current.verified_by,
+                        "reviewed_by": current.reviewed_by or current.verified_by,
+                        "verified_at": current.verified_at,
+                        "reviewed_at": current.reviewed_at or current.verified_at,
+                        "raw_data": json.dumps(current.manual_result),
+                    },
+                )
 
     def _detect_changes(self, previous: HardwareOpportunity | None, current: HardwareOpportunity) -> list[HardwareChangeType]:
         if previous is None:

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  bulkReviewHardwareOpportunities,
   createHardwareTelegramReport,
   getHardwareDailyScanJob,
   getHardwareDashboard,
@@ -21,6 +22,7 @@ import {
   updateHardwareOpportunityManualStatus,
   updateHardwareScheduler,
 } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import type {
   HardwareCategory,
   HardwareDashboard,
@@ -30,7 +32,7 @@ import type {
 } from "@novaion/shared/types";
 
 const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "cpu"];
-const tabs = ["overview", "opportunities", "source runs", "telegram reports"] as const;
+const tabs = ["overview", "opportunities", "needs review", "source runs", "telegram reports"] as const;
 type Tab = (typeof tabs)[number];
 type SortBy = "score" | "newest" | "price" | "auction" | "risk";
 type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "history" | "missing_components" | "pickup_only";
@@ -45,6 +47,19 @@ type ScanPreset =
   | "supplier_discovery"
   | "custom";
 type DashboardScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
+type ReviewFormPayload = {
+  manual_status: string;
+  review_action: string;
+  manual_quantity: string;
+  manual_current_price: string;
+  manual_total_price: string;
+  manual_end_time: string;
+  manual_timezone: string;
+  manual_location: string;
+  manual_condition: string;
+  manual_component_completeness: string;
+  review_notes: string;
+};
 
 const sourceCount = 5;
 const defaultStates = ["TX", "CA", "GA"];
@@ -130,6 +145,7 @@ const stateLookup = new Map<string, string>(
 );
 
 export default function HardwareDashboardPage() {
+  const { t } = useI18n();
   const [dashboard, setDashboard] = useState<HardwareDashboard | null>(null);
   const [job, setJob] = useState<HardwareScanJob | null>(null);
   const [selectedCategories, setSelectedCategories] = useState<HardwareCategory[]>(["servers"]);
@@ -148,6 +164,8 @@ export default function HardwareDashboardPage() {
   const [resultScope, setResultScope] = useState<ResultScope>("current_scan");
   const [stateFilter, setStateFilter] = useState("all");
   const [selectedOpportunity, setSelectedOpportunity] = useState<HardwareOpportunity | null>(null);
+  const [reviewOpportunity, setReviewOpportunity] = useState<HardwareOpportunity | null>(null);
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
   const [telegramOpen, setTelegramOpen] = useState(false);
   const [recheckSummary, setRecheckSummary] = useState<string | null>(null);
 
@@ -227,6 +245,7 @@ export default function HardwareDashboardPage() {
     () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING") || item.listing_status === "ending_soon").length,
     [currentOpportunities],
   );
+  const reviewStats = useMemo(() => buildReviewStats(needsReviewOpportunities, historyOpportunities), [historyOpportunities, needsReviewOpportunities]);
   const scopedNewCount = useMemo(
     () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("NEW")).length,
     [currentOpportunities],
@@ -351,6 +370,65 @@ export default function HardwareDashboardPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function saveReview(opportunityId: string, payload: ReviewFormPayload) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await updateHardwareOpportunityManualStatus(opportunityId, {
+        manual_status: payload.manual_status,
+        manual_end_time: payload.manual_end_time || null,
+        manual_timezone: payload.manual_timezone || "America/Los_Angeles",
+        manual_quantity: nullableNumber(payload.manual_quantity),
+        manual_current_price: nullableNumber(payload.manual_current_price),
+        manual_total_price: nullableNumber(payload.manual_total_price),
+        manual_location: payload.manual_location || null,
+        manual_condition: payload.manual_condition || null,
+        manual_component_completeness: payload.manual_component_completeness || null,
+        review_action: payload.review_action,
+        review_notes: payload.review_notes || null,
+        manual_notes: payload.review_notes || null,
+        verified_by: "local_user",
+      });
+      setReviewOpportunity(updated);
+      setSelectedOpportunity(updated);
+      setSelectedReviewIds((current) => current.filter((id) => id !== opportunityId));
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Review save failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bulkReview(action: "ended" | "unavailable" | "ignored" | "recheck") {
+    if (!selectedReviewIds.length) return;
+    if (!window.confirm(`Apply ${action} to ${selectedReviewIds.length} records?`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (action === "recheck") {
+        await bulkReviewHardwareOpportunities({ opportunity_ids: selectedReviewIds, review_action: "recheck", verified_by: "local_user" });
+      } else {
+        await bulkReviewHardwareOpportunities({
+          opportunity_ids: selectedReviewIds,
+          review_action: action,
+          manual_status: action,
+          verified_by: "local_user",
+        });
+      }
+      setSelectedReviewIds([]);
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk review failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function toggleReviewSelection(id: string) {
+    setSelectedReviewIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
   }
 
   function toggleCategory(category: HardwareCategory) {
@@ -638,7 +716,7 @@ export default function HardwareDashboardPage() {
       <nav className="dashboard-tabs">
         {tabs.map((tab) => (
           <button key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>
-            {tab}
+            {tabLabel(tab, t)}
           </button>
         ))}
       </nav>
@@ -732,6 +810,33 @@ export default function HardwareDashboardPage() {
         </section>
       ) : null}
 
+      {activeTab === "needs review" ? (
+        <section className="panel compact-panel">
+          <div className="panel-head">
+            <div>
+              <div className="section-label">{t("needsReview")} / Needs Review</div>
+              <h2>{reviewStats.total} {t("requiresReview")}</h2>
+              <p className="muted">
+                {t("reviewedToday")}: {reviewStats.reviewedToday} · {t("remaining")}: {reviewStats.remaining} · {t("blocked")}: {reviewStats.blocked} · {t("unknownEndTime")}: {reviewStats.unknownEndTime} · {t("ignored")}: {reviewStats.ignored}
+              </p>
+            </div>
+            <div className="dashboard-actions no-margin">
+              <button className="button secondary" disabled={busy || !selectedReviewIds.length} onClick={() => bulkReview("recheck")}>{t("recheckNow")}</button>
+              <button className="button secondary" disabled={busy || !selectedReviewIds.length} onClick={() => bulkReview("ended")}>{t("markEnded")}</button>
+              <button className="button secondary" disabled={busy || !selectedReviewIds.length} onClick={() => bulkReview("unavailable")}>{t("markUnavailable")}</button>
+              <button className="button secondary" disabled={busy || !selectedReviewIds.length} onClick={() => bulkReview("ignored")}>{t("ignore")}</button>
+            </div>
+          </div>
+          <NeedsReviewTable
+            opportunities={needsReviewOpportunities}
+            selectedIds={selectedReviewIds}
+            onToggle={toggleReviewSelection}
+            onReview={setReviewOpportunity}
+            t={t}
+          />
+        </section>
+      ) : null}
+
       {activeTab === "source runs" ? (
         <section className="panel compact-panel">
           <div className="panel-head">
@@ -787,6 +892,13 @@ export default function HardwareDashboardPage() {
         onClose={() => setSelectedOpportunity(null)}
         onRecheck={recheckSelectedOpportunity}
         onManualStatus={manualStatus}
+      />
+      <ReviewDrawer
+        opportunity={reviewOpportunity}
+        onClose={() => setReviewOpportunity(null)}
+        onRecheck={recheckSelectedOpportunity}
+        onSave={saveReview}
+        t={t}
       />
       <TelegramDrawer
         open={telegramOpen}
@@ -867,19 +979,81 @@ function OpportunityTable({
                   <BadgeRow item={item} />
                 </div>
               </td>
-              <td>{item.model ?? <span className="muted">verify</span>}</td>
+              <td>{item.model ?? <span className="muted">Unknown</span>}</td>
               <td>{formatEndTime(item)}</td>
               <td>{timeLeftLabel(item)}</td>
-              <td>{item.quantity ?? <span className="muted">verify</span>}</td>
+              <td>{item.quantity ?? <span className="muted">Unknown</span>}</td>
               <td>{formatMoney(item.current_total_cost ?? item.total_price)}</td>
               <td>{formatMoney(item.cost_per_unit ?? item.unit_price)}</td>
-              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">verify</span>}</td>
+              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">Unknown</span>}</td>
               <td><span className="pill">{item.component_completeness}</span></td>
               <td><span className="pill">{item.listing_status}</span></td>
               <td>{verificationBadge(item)}</td>
               <td>
                 <button className="button secondary compact-button" onClick={() => onView(item)}>
                   View
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function NeedsReviewTable({
+  opportunities,
+  selectedIds,
+  onToggle,
+  onReview,
+  t,
+}: {
+  opportunities: HardwareOpportunity[];
+  selectedIds: string[];
+  onToggle: (id: string) => void;
+  onReview: (opportunity: HardwareOpportunity) => void;
+  t: (key: string) => string;
+}) {
+  if (!opportunities.length) return <div className="muted empty-state">{t("noRecords")}</div>;
+  return (
+    <div className="table-wrap compact-table-wrap">
+      <table className="compact-table opportunity-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>{t("title")}</th>
+            <th>{t("source")}</th>
+            <th>{t("state")}</th>
+            <th>{t("category")}</th>
+            <th>{t("reason")}</th>
+            <th>End Time</th>
+            <th>{t("price")}</th>
+            <th>{t("quantity")}</th>
+            <th>{t("lastChecked")}</th>
+            <th>{t("reviewStatus")}</th>
+            <th>{t("action")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {opportunities.map((item, index) => (
+            <tr key={`review-${stableOpportunityKey(item, index)}`}>
+              <td>
+                <input type="checkbox" checked={selectedIds.includes(item.opportunity_id)} onChange={() => onToggle(item.opportunity_id)} />
+              </td>
+              <td>{safeText(item.title, t)}</td>
+              <td>{safeText(item.source, t)}</td>
+              <td>{safeText(item.location_state, t)}</td>
+              <td>{safeText(item.category, t)}</td>
+              <td>{reasonLabel(reviewReason(item), t)}</td>
+              <td>{formatEndTime(item)}</td>
+              <td>{formatMoney(item.final_price ?? item.current_total_cost ?? item.total_price)}</td>
+              <td>{item.final_quantity ?? item.quantity ?? t("unknown")}</td>
+              <td>{formatDate(item.last_checked_at)}</td>
+              <td>{statusLabel(item.listing_status, t)}</td>
+              <td>
+                <button className="button secondary compact-button" onClick={() => onReview(item)}>
+                  {t("review")}
                 </button>
               </td>
             </tr>
@@ -1073,6 +1247,119 @@ function OpportunityDrawer({
   );
 }
 
+function ReviewDrawer({
+  opportunity,
+  onClose,
+  onRecheck,
+  onSave,
+  t,
+}: {
+  opportunity: HardwareOpportunity | null;
+  onClose: () => void;
+  onRecheck: (opportunityId: string) => void;
+  onSave: (opportunityId: string, payload: ReviewFormPayload) => void;
+  t: (key: string) => string;
+}) {
+  const [form, setForm] = useState<ReviewFormPayload>(emptyReviewForm());
+
+  useEffect(() => {
+    if (!opportunity) return;
+    setForm({
+      manual_status: opportunity.manual_status ?? opportunity.listing_status ?? "needs_manual_review",
+      review_action: opportunity.review_action ?? "save_review",
+      manual_quantity: stringValue(opportunity.manual_quantity ?? opportunity.quantity),
+      manual_current_price: stringValue(opportunity.manual_current_price ?? opportunity.current_price),
+      manual_total_price: stringValue(opportunity.manual_total_price ?? opportunity.total_price),
+      manual_end_time: toLocalInputValue(opportunity.manual_end_time ?? opportunity.end_time_utc ?? opportunity.auction_end_time),
+      manual_timezone: opportunity.manual_timezone ?? "America/Los_Angeles",
+      manual_location: opportunity.manual_location ?? [opportunity.location_city, opportunity.location_state].filter(Boolean).join(", "),
+      manual_condition: opportunity.manual_condition ?? opportunity.condition ?? "",
+      manual_component_completeness: opportunity.manual_component_completeness ?? opportunity.component_completeness ?? "unknown",
+      review_notes: opportunity.review_notes ?? opportunity.manual_notes ?? "",
+    });
+  }, [opportunity]);
+
+  if (!opportunity) return null;
+  const missingFields = fieldsNeedingVerification(opportunity);
+  const update = (field: keyof ReviewFormPayload, value: string) => setForm((current) => ({ ...current, [field]: value }));
+  const quickSave = (status: string, action: string) => {
+    onSave(opportunity.opportunity_id, { ...form, manual_status: status, review_action: action });
+  };
+  return (
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={(event) => event.stopPropagation()}>
+        <DrawerHeader title={`${t("needsReview")} / Review`} onClose={onClose} />
+        <div className="drawer-body">
+          <h2>{safeText(opportunity.raw_title || opportunity.title, t)}</h2>
+          <p className="muted">{safeText(opportunity.raw_description, t)}</p>
+          <div className="drawer-score-row">
+            <StatusPill label={t("source")} value={safeText(opportunity.source, t)} />
+            <StatusPill label="Listing ID" value={safeText(opportunity.source_listing_id ?? opportunity.lot_number, t)} />
+            <StatusPill label="Auto Status" value={statusLabel(opportunity.listing_status, t)} />
+            <StatusPill label={t("reason")} value={reasonLabel(reviewReason(opportunity), t)} />
+          </div>
+          <div className="detail-compact-grid">
+            <Detail label="Automated End Time" value={formatEndTime(opportunity)} />
+            <Detail label="Automated Price" value={formatMoney(opportunity.current_total_cost ?? opportunity.total_price)} />
+            <Detail label="Automated Quantity" value={opportunity.quantity} />
+            <Detail label={t("lastChecked")} value={formatDate(opportunity.last_checked_at)} />
+            <Detail label="Risk" value={(opportunity.risk_flags ?? []).join(", ")} />
+            <Detail label="Missing" value={missingFields.join(", ")} />
+          </div>
+
+          <div className="review-form-grid">
+            <label className="field compact-field">
+              <span>Manual Status</span>
+              <select className="select" value={form.manual_status} onChange={(event) => update("manual_status", event.target.value)}>
+                <option value="needs_manual_review">{t("requiresReview")}</option>
+                <option value="active">{t("markActive")}</option>
+                <option value="ending_soon">{t("markEndingSoon")}</option>
+                <option value="ended">{t("markEnded")}</option>
+                <option value="sold">{t("markSold")}</option>
+                <option value="unavailable">{t("markUnavailable")}</option>
+                <option value="ignored">{t("ignore")}</option>
+              </select>
+            </label>
+            <label className="field compact-field"><span>{t("quantity")}</span><input value={form.manual_quantity} onChange={(event) => update("manual_quantity", event.target.value)} /></label>
+            <label className="field compact-field"><span>Current Price</span><input value={form.manual_current_price} onChange={(event) => update("manual_current_price", event.target.value)} /></label>
+            <label className="field compact-field"><span>Total Price</span><input value={form.manual_total_price} onChange={(event) => update("manual_total_price", event.target.value)} /></label>
+            <label className="field compact-field"><span>End Time</span><input type="datetime-local" value={form.manual_end_time} onChange={(event) => update("manual_end_time", event.target.value)} /></label>
+            <label className="field compact-field"><span>Timezone</span><input value={form.manual_timezone} onChange={(event) => update("manual_timezone", event.target.value)} /></label>
+            <label className="field compact-field"><span>Location</span><input value={form.manual_location} onChange={(event) => update("manual_location", event.target.value)} /></label>
+            <label className="field compact-field"><span>Condition</span><input value={form.manual_condition} onChange={(event) => update("manual_condition", event.target.value)} /></label>
+            <label className="field compact-field">
+              <span>Completeness</span>
+              <select className="select" value={form.manual_component_completeness} onChange={(event) => update("manual_component_completeness", event.target.value)}>
+                {["complete", "mostly_complete", "missing_storage", "missing_memory", "missing_cpu", "missing_psu", "barebone", "mixed_lot", "unknown"].map((value) => (
+                  <option value={value} key={value}>{value}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field compact-field review-notes-field">
+              <span>{t("reviewNotes")}</span>
+              <textarea value={form.review_notes} onChange={(event) => update("review_notes", event.target.value)} />
+            </label>
+          </div>
+
+          <div className="actions">
+            <a className="button gold" href={opportunity.source_url} target="_blank"><ExternalLink size={16} />{t("openOriginalLink")}</a>
+            <button className="button secondary" type="button" onClick={() => onRecheck(opportunity.opportunity_id)}><RefreshCw size={16} />{t("recheckNow")}</button>
+          </div>
+          <div className="actions">
+            <button className="button secondary" type="button" onClick={() => quickSave("active", "mark_active")}>{t("markActive")}</button>
+            <button className="button secondary" type="button" onClick={() => quickSave("ending_soon", "mark_ending_soon")}>{t("markEndingSoon")}</button>
+            <button className="button secondary" type="button" onClick={() => quickSave("ended", "mark_ended")}>{t("markEnded")}</button>
+            <button className="button secondary" type="button" onClick={() => quickSave("sold", "mark_sold")}>{t("markSold")}</button>
+            <button className="button secondary" type="button" onClick={() => quickSave("unavailable", "mark_unavailable")}>{t("markUnavailable")}</button>
+            <button className="button secondary" type="button" onClick={() => quickSave("ignored", "ignore")}>{t("ignore")}</button>
+            <button className="button gold" type="button" onClick={() => onSave(opportunity.opportunity_id, { ...form, review_action: "save_review" })}>{t("saveReview")}</button>
+          </div>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 function TelegramDrawer({
   open,
   reportText,
@@ -1121,7 +1408,7 @@ function Detail({ label, value }: { label: string; value?: string | number | nul
   return (
     <div>
       <span>{label}</span>
-      <strong>{value || <span className="muted">verify</span>}</strong>
+      <strong>{value || <span className="muted">Unknown</span>}</strong>
     </div>
   );
 }
@@ -1285,7 +1572,7 @@ function isNeedsReviewOpportunity(item: HardwareOpportunity) {
 
 function isHistoryOpportunity(item: HardwareOpportunity) {
   if (item.end_time_verification === "conflicting") return false;
-  return ["ended", "sold", "removed", "unavailable"].includes(item.listing_status) || hasPastEndTime(item);
+  return ["ended", "sold", "removed", "unavailable", "ignored"].includes(item.listing_status) || hasPastEndTime(item);
 }
 
 function hasReviewBlocker(item: HardwareOpportunity) {
@@ -1342,6 +1629,100 @@ function summarizeSources(sourceRuns: HardwareSourceRun[]) {
     },
     { successful: 0, zero: 0, failed: 0 },
   );
+}
+
+function tabLabel(tab: Tab, t: (key: string) => string) {
+  if (tab === "needs review") return t("needsReview");
+  if (tab === "source runs") return "Source Runs";
+  if (tab === "telegram reports") return "Telegram Reports";
+  if (tab === "opportunities") return "Opportunities";
+  return "Overview";
+}
+
+function buildReviewStats(needsReview: HardwareOpportunity[], history: HardwareOpportunity[]) {
+  const today = new Date().toDateString();
+  return {
+    total: needsReview.length,
+    reviewedToday: [...needsReview, ...history].filter((item) => item.reviewed_at && new Date(item.reviewed_at).toDateString() === today).length,
+    remaining: needsReview.length,
+    conflicting: needsReview.filter((item) => item.end_time_verification === "conflicting").length,
+    blocked: needsReview.filter((item) => reviewReason(item) === "blocked").length,
+    unknownEndTime: needsReview.filter((item) => !confirmedEndTime(item)).length,
+    ignored: history.filter((item) => item.listing_status === "ignored").length,
+  };
+}
+
+function reviewReason(item: HardwareOpportunity) {
+  if (item.end_time_verification === "conflicting") return "conflicting";
+  if (hasUnconfirmedBlockedSource(item)) return "blocked";
+  if (!confirmedEndTime(item)) return "end_time_unknown";
+  if (item.listing_status === "unknown") return "stale_unknown";
+  if (item.end_time_verification === "unknown") return "verification_unknown";
+  if (item.needs_manual_review) return "needs_manual_review";
+  return item.status_check_result || "needs_manual_review";
+}
+
+function statusLabel(value: string | null | undefined, t: (key: string) => string) {
+  const labels: Record<string, string> = {
+    needs_manual_review: t("requiresReview"),
+    conflicting: t("conflicting"),
+    blocked: t("blocked"),
+    stale_unknown: t("staleUnknown"),
+    end_time_unknown: t("endTimeUnknown"),
+    verification_unknown: t("verificationUnknown"),
+    ignored: t("ignored"),
+    active: t("statusActive"),
+    ending_soon: t("statusEndingSoon"),
+    ended: t("statusEnded"),
+    sold: t("statusSold"),
+    unavailable: t("statusUnavailable"),
+    unknown: t("unknown"),
+  };
+  return labels[value || "unknown"] ?? value ?? t("unknown");
+}
+
+function reasonLabel(value: string | null | undefined, t: (key: string) => string) {
+  if (!value) return t("requiresReview");
+  if (value.includes("blocked")) return t("blocked");
+  return statusLabel(value, t);
+}
+
+function safeText(value?: string | null, t?: (key: string) => string) {
+  return value && value.trim() ? value : t ? t("unknown") : "Unknown";
+}
+
+function stringValue(value?: string | number | null) {
+  return value === null || value === undefined ? "" : String(value);
+}
+
+function nullableNumber(value: string) {
+  if (!value.trim()) return null;
+  const parsed = Number(value.replaceAll(",", ""));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toLocalInputValue(value?: string | null) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function emptyReviewForm(): ReviewFormPayload {
+  return {
+    manual_status: "needs_manual_review",
+    review_action: "save_review",
+    manual_quantity: "",
+    manual_current_price: "",
+    manual_total_price: "",
+    manual_end_time: "",
+    manual_timezone: "America/Los_Angeles",
+    manual_location: "",
+    manual_condition: "",
+    manual_component_completeness: "unknown",
+    review_notes: "",
+  };
 }
 
 function normalizeState(input: string) {
@@ -1404,15 +1785,15 @@ function fieldsNeedingVerification(item: HardwareOpportunity) {
 }
 
 function formatMoney(value?: number | null) {
-  return value ? `$${value.toLocaleString()}` : "verify";
+  return value ? `$${value.toLocaleString()}` : "Unknown";
 }
 
 function formatDate(value?: string | null) {
-  return value ? new Date(value).toLocaleString() : "verify";
+  return value ? new Date(value).toLocaleString() : "Unknown";
 }
 
 function formatShortDate(value?: string | null) {
-  return value ? new Date(value).toLocaleDateString() : "verify";
+  return value ? new Date(value).toLocaleDateString() : "Unknown";
 }
 
 function formatEndTime(item: HardwareOpportunity) {
@@ -1447,7 +1828,7 @@ function verificationBadge(item: HardwareOpportunity) {
 }
 
 function pickupShipping(item: HardwareOpportunity) {
-  const pickup = item.pickup_only === true ? "pickup only" : item.pickup_only === false ? "pickup unknown" : "pickup verify";
-  const shipping = item.shipping_available === true ? "shipping yes" : item.shipping_available === false ? "shipping no" : "shipping verify";
+  const pickup = item.pickup_only === true ? "pickup only" : item.pickup_only === false ? "pickup unknown" : "pickup unknown";
+  const shipping = item.shipping_available === true ? "shipping yes" : item.shipping_available === false ? "shipping no" : "shipping unknown";
   return `${pickup} / ${shipping}`;
 }
