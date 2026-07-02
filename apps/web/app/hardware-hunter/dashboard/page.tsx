@@ -38,6 +38,7 @@ type SortBy = "score" | "newest" | "price" | "auction" | "risk";
 type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "history" | "missing_components" | "pickup_only";
 type ResultScope = "current_scan" | "all_current" | "selected_states";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
+type ScanDepth = "quick" | "standard" | "deep";
 type ScanPreset =
   | "full_hardware_scan"
   | "servers_only"
@@ -61,7 +62,12 @@ type ReviewFormPayload = {
   review_notes: string;
 };
 
-const sourceCount = 5;
+const sourceCount = 2;
+const scanDepthQueryCounts: Record<ScanDepth, number> = {
+  quick: 2,
+  standard: 5,
+  deep: 10,
+};
 const defaultStates = ["TX", "CA", "GA"];
 const usStates = [
   ["AL", "Alabama", "阿拉巴马州"],
@@ -135,6 +141,7 @@ export default function HardwareDashboardPage() {
   const [regionStrategy, setRegionStrategy] = useState<RegionStrategy>("priority_states");
   const [scanPreset, setScanPreset] = useState<ScanPreset>("servers_only");
   const [scanMode, setScanMode] = useState<DashboardScanMode>("asset_listing_search");
+  const [scanDepth, setScanDepth] = useState<ScanDepth>("standard");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -213,8 +220,8 @@ export default function HardwareDashboardPage() {
     [regionStrategy, selectedStates, t],
   );
   const estimatedTasks = useMemo(
-    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length),
-    [regionStrategy, selectedStates.length, selectedCategories.length],
+    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth),
+    [regionStrategy, selectedStates.length, selectedCategories.length, scanDepth],
   );
   const runButtonLabel = useMemo(() => {
     if (busy || scanProgress.isScanning) return t("scanning");
@@ -256,7 +263,8 @@ export default function HardwareDashboardPage() {
         states: regionStrategy === "all_us" ? [] : selectedStates,
         test_run: true,
         max_results_per_query: 3,
-        max_queries_per_category: scanPreset === "full_hardware_scan" ? 4 : 2,
+        max_queries_per_category: scanDepthQueryCounts[scanDepth],
+        scan_depth: scanDepth,
         send_telegram: false,
       });
       setJob(created);
@@ -565,6 +573,15 @@ export default function HardwareDashboardPage() {
               <button onClick={() => { setSelectedCategories([]); setScanPreset("custom"); }}>{t("clear")}</button>
             </div>
           </div>
+
+          <label className="field compact-field">
+            <span>{t("scanDepth")}</span>
+            <select className="select" value={scanDepth} onChange={(event) => { setScanDepth(event.target.value as ScanDepth); setScanPreset("custom"); }}>
+              <option value="quick">{t("quick")}</option>
+              <option value="standard">{t("standard")}</option>
+              <option value="deep">{t("deep")}</option>
+            </select>
+          </label>
         </div>
 
         <div className="scan-action-row">
@@ -582,6 +599,10 @@ export default function HardwareDashboardPage() {
             </button>
             <div className="scan-summary">
               {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {sourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
+            </div>
+            <div className="scan-summary">
+              {t("queryPreview")}: {sourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × {regionStrategy === "all_us" ? 1 : Math.max(selectedStates.length, 1)} {t("states")} × {scanDepthQueryCounts[scanDepth]} queries = {estimatedTasks} {t("tasks")}
+              {estimatedTasks >= 100 ? ` · ${t("largeScanWarning")}` : ""}
             </div>
             {scanProgress.isScanning ? (
               <div className="scan-progress">
@@ -736,7 +757,12 @@ export default function HardwareDashboardPage() {
                 {showSources ? t("collapseSourceRuns") : t("viewSourceRuns")}
               </button>
             </div>
-            {showSources ? <SourceRunsTable sourceRuns={sourceRuns} t={t} /> : null}
+            {showSources ? (
+              <>
+                <SourceQualitySummary sourceRuns={sourceRuns} t={t} />
+                <SourceRunsTable sourceRuns={sourceRuns} t={t} />
+              </>
+            ) : null}
           </section>
 
           <section className="panel compact-panel">
@@ -833,7 +859,12 @@ export default function HardwareDashboardPage() {
               {showSources ? t("collapseSourceRuns") : t("viewSourceRuns")}
             </button>
           </div>
-          {showSources ? <SourceRunsTable sourceRuns={sourceRuns} t={t} /> : <p className="muted">{t("sourceRunsCollapsed")}</p>}
+          {showSources ? (
+            <>
+              <SourceQualitySummary sourceRuns={sourceRuns} t={t} />
+              <SourceRunsTable sourceRuns={sourceRuns} t={t} />
+            </>
+          ) : <p className="muted">{t("sourceRunsCollapsed")}</p>}
         </section>
       ) : null}
 
@@ -1072,24 +1103,54 @@ function SourceRunsTable({ sourceRuns, t }: { sourceRuns: HardwareSourceRun[]; t
           <tr>
             <th>{t("source")}</th>
             <th>{t("category")}</th>
+            <th>{t("state")}</th>
+            <th>{t("queryTemplate")}</th>
+            <th>{t("expandedQuery")}</th>
+            <th>{t("scanDepth")}</th>
             <th>{t("status")}</th>
-            <th>{t("results")}</th>
-            <th>Query</th>
+            <th>{t("resultCount")}</th>
+            <th>{t("specificListingCount")}</th>
+            <th>{t("zeroResult")}</th>
+            <th>{t("duration")}</th>
+            <th>{t("error")}</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((run) => (
             <tr key={run.id}>
               <td>{run.source_name}</td>
-              <td>{run.category ?? "-"}</td>
+              <td>{run.category ? categoryLabel(run.category, t) : "-"}</td>
+              <td>{run.state_code ?? run.state_name ?? "-"}</td>
+              <td className="muted truncate-query" title={run.query_template ?? ""}>{run.query_template ?? "-"}</td>
+              <td className="muted truncate-query" title={run.expanded_query ?? run.query ?? ""}>{run.expanded_query ?? run.query ?? "-"}</td>
+              <td>{run.scan_depth}</td>
               <td><span className="pill">{run.status}</span></td>
               <td>{run.result_count}</td>
-              <td className="muted truncate-query" title={run.query ?? ""}>{run.query ?? "-"}</td>
+              <td>{run.specific_listing_count ?? 0}</td>
+              <td>{run.result_count === 0 ? run.zero_result_reason ?? "unknown" : "-"}</td>
+              <td>{sourceRunDuration(run)}</td>
+              <td className="muted truncate-query" title={run.error_message ?? ""}>{run.error_message ?? "-"}</td>
             </tr>
           ))}
-          {!rows.length ? <tr><td colSpan={5} className="muted">{t("noRecords")}</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={11} className="muted">{t("noRecords")}</td></tr> : null}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function SourceQualitySummary({ sourceRuns, t }: { sourceRuns: HardwareSourceRun[]; t: (key: string) => string }) {
+  const stats = buildSourceQualityStats(sourceRuns);
+  if (!stats.length) return null;
+  return (
+    <div className="quality-strip source-quality-strip">
+      {stats.map((item) => (
+        <span key={item.source}>
+          {item.source}
+          <strong>{item.totalQueries} q · {item.queriesWithResults} hit · {item.zeroResultQueries} zero</strong>
+          <small>{item.rawResults} raw · {item.specificListings} specific · {Math.round(item.resultRate * 100)}% result · {Math.round(item.specificListingRate * 100)}% specific</small>
+        </span>
+      ))}
     </div>
   );
 }
@@ -1119,6 +1180,46 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
       ))}
     </div>
   );
+}
+
+function buildSourceQualityStats(sourceRuns: HardwareSourceRun[]) {
+  const bySource = new Map<string, {
+    source: string;
+    totalQueries: number;
+    queriesWithResults: number;
+    zeroResultQueries: number;
+    rawResults: number;
+    specificListings: number;
+    currentOpportunities: number;
+    needsReview: number;
+    history: number;
+    resultRate: number;
+    specificListingRate: number;
+  }>();
+  for (const run of sourceRuns) {
+    const item = bySource.get(run.source_name) ?? {
+      source: run.source_name,
+      totalQueries: 0,
+      queriesWithResults: 0,
+      zeroResultQueries: 0,
+      rawResults: 0,
+      specificListings: 0,
+      currentOpportunities: 0,
+      needsReview: 0,
+      history: 0,
+      resultRate: 0,
+      specificListingRate: 0,
+    };
+    item.totalQueries += 1;
+    item.rawResults += run.result_count;
+    item.specificListings += run.specific_listing_count ?? 0;
+    if (run.result_count > 0) item.queriesWithResults += 1;
+    else item.zeroResultQueries += 1;
+    item.resultRate = item.totalQueries ? item.queriesWithResults / item.totalQueries : 0;
+    item.specificListingRate = item.rawResults ? item.specificListings / item.rawResults : 0;
+    bySource.set(run.source_name, item);
+  }
+  return [...bySource.values()].sort((a, b) => a.source.localeCompare(b.source));
 }
 
 function OpportunityDrawer({
@@ -1616,6 +1717,13 @@ function summarizeSources(sourceRuns: HardwareSourceRun[]) {
   );
 }
 
+function sourceRunDuration(run: HardwareSourceRun) {
+  if (!run.started_at || !run.completed_at) return "-";
+  const ms = Date.parse(run.completed_at) - Date.parse(run.started_at);
+  if (!Number.isFinite(ms) || ms < 0) return "-";
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function tabLabel(tab: Tab, t: (key: string) => string) {
   if (tab === "needs review") return t("needsReview");
   if (tab === "source runs") return t("sourceRuns");
@@ -1731,9 +1839,9 @@ function normalizeState(input: string) {
   return stateLookup.get(key) ?? null;
 }
 
-function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number) {
+function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth) {
   const regionFactor = strategy === "all_us" ? 1 : Math.max(stateCount, 1);
-  return regionFactor * categoryCount * sourceCount;
+  return regionFactor * categoryCount * sourceCount * scanDepthQueryCounts[scanDepth];
 }
 
 function buildScanProgress(job: HardwareScanJob | null) {

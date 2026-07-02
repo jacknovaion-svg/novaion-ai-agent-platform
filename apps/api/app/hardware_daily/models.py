@@ -127,6 +127,22 @@ class HardwareChangeType(str, Enum):
     SUPPLIER_DISCOVERED = "SUPPLIER_DISCOVERED"
 
 
+class HardwareScanDepth(str, Enum):
+    QUICK = "quick"
+    STANDARD = "standard"
+    DEEP = "deep"
+
+
+class HardwareZeroResultReason(str, Enum):
+    QUERY_TOO_NARROW = "query_too_narrow"
+    NO_INDEXED_RESULTS = "no_indexed_results"
+    SOURCE_BLOCKED = "source_blocked"
+    SOURCE_TIMEOUT = "source_timeout"
+    STATE_FILTER_TOO_STRICT = "state_filter_too_strict"
+    NO_SPECIFIC_LISTING = "no_specific_listing"
+    UNKNOWN = "unknown"
+
+
 class HardwareResultPageType(str, Enum):
     SPECIFIC_LISTING = "specific_listing"
     LISTING_COLLECTION = "listing_collection"
@@ -142,6 +158,7 @@ class HardwareScanRequest(BaseModel):
     test_run: bool = True
     max_results_per_query: int = Field(default=4, ge=1, le=20)
     max_queries_per_category: int = Field(default=8, ge=1, le=40)
+    scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
     send_telegram: bool = False
     manual_urls: list[HttpUrl] = Field(default_factory=list)
     manual_text: str | None = None
@@ -152,8 +169,16 @@ class HardwareGeneratedQuery(BaseModel):
     category: HardwareCategory
     source_group: str
     generated_query_en: str
+    query_template_id: str | None = None
+    query_template: str | None = None
+    state_code: str | None = None
+    state_name: str | None = None
+    location_phrase: str | None = None
+    scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
     status: HardwareSourceRunStatus = HardwareSourceRunStatus.PENDING
     result_count: int = 0
+    specific_listing_count: int = 0
+    zero_result_reason: HardwareZeroResultReason | None = None
 
 
 class HardwareSourceRun(BaseModel):
@@ -161,9 +186,17 @@ class HardwareSourceRun(BaseModel):
     source_name: str
     adapter_type: str
     query: str | None = None
+    expanded_query: str | None = None
+    query_template_id: str | None = None
+    query_template: str | None = None
+    state_code: str | None = None
+    state_name: str | None = None
+    scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
     category: HardwareCategory | None = None
     status: HardwareSourceRunStatus = HardwareSourceRunStatus.PENDING
     result_count: int = 0
+    specific_listing_count: int = 0
+    zero_result_reason: HardwareZeroResultReason | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None

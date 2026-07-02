@@ -196,6 +196,7 @@ export type HardwareScanJobStatus = "created" | "running" | "partially_completed
 export type HardwareSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
 export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
 export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu";
+export type HardwareScanDepth = "quick" | "standard" | "deep";
 export type HardwareCondition =
   | "new"
   | "open_box"
@@ -225,8 +226,16 @@ export interface HardwareGeneratedQuery {
   category: HardwareCategory;
   source_group: string;
   generated_query_en: string;
+  query_template_id?: string | null;
+  query_template?: string | null;
+  state_code?: string | null;
+  state_name?: string | null;
+  location_phrase?: string | null;
+  scan_depth: HardwareScanDepth;
   status: HardwareSourceRunStatus;
   result_count: number;
+  specific_listing_count: number;
+  zero_result_reason?: string | null;
 }
 
 export interface HardwareSourceRun {
@@ -234,9 +243,17 @@ export interface HardwareSourceRun {
   source_name: string;
   adapter_type: string;
   query?: string | null;
+  expanded_query?: string | null;
+  query_template_id?: string | null;
+  query_template?: string | null;
+  state_code?: string | null;
+  state_name?: string | null;
+  scan_depth: HardwareScanDepth;
   category?: HardwareCategory | null;
   status: HardwareSourceRunStatus;
   result_count: number;
+  specific_listing_count: number;
+  zero_result_reason?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   error_message?: string | null;

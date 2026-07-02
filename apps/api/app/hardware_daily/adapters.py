@@ -205,6 +205,9 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
         return " ".join(cleaned.split()) or "server"
 
     def _public_surplus_keyword(self, query) -> str:
+        template = getattr(query, "query_template", None)
+        if template:
+            return self._clean_source_query(str(template))
         by_category = {
             "servers": "server",
             "gpu": "gpu",

@@ -18,10 +18,12 @@ from app.hardware_daily.models import (
     SchedulerStatus,
     HardwareScanJob,
     HardwareScanJobStatus,
+    HardwareScanDepth,
     HardwareScanMode,
     HardwareScanRequest,
     HardwareSourceRun,
     HardwareSourceRunStatus,
+    HardwareZeroResultReason,
     RawHardwareListing,
     utc_now,
 )
@@ -102,6 +104,7 @@ class HardwareHunterDailyScheduler:
                 categories=job.categories,
                 states=job.states,
                 max_queries_per_category=request.max_queries_per_category,
+                scan_depth=request.scan_depth,
             )
             hardware_daily_store.update_job(job)
 
@@ -285,6 +288,7 @@ class HardwareHunterDailyScheduler:
                     test_run=False,
                     max_results_per_query=4,
                     max_queries_per_category=8,
+                    scan_depth=HardwareScanDepth.STANDARD,
                     send_telegram=self.settings.hardware_hunter_telegram_enabled,
                 )
                 job = self.create_job(request)
@@ -306,6 +310,12 @@ class HardwareHunterDailyScheduler:
                 source_name=query.source_group,
                 adapter_type=web_adapter.adapter_type,
                 query=query.generated_query_en,
+                expanded_query=query.generated_query_en,
+                query_template_id=query.query_template_id,
+                query_template=query.query_template,
+                state_code=query.state_code,
+                state_name=query.state_name,
+                scan_depth=query.scan_depth,
                 category=query.category,
                 status=HardwareSourceRunStatus.SEARCHING,
                 started_at=utc_now(),
@@ -317,18 +327,26 @@ class HardwareHunterDailyScheduler:
                     results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
                 source_run.status = HardwareSourceRunStatus.SUCCESS
                 source_run.result_count = len(results)
+                source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
+                source_run.zero_result_reason = self._zero_result_reason(source_run, results)
                 query.status = HardwareSourceRunStatus.SUCCESS
                 query.result_count = len(results)
+                query.specific_listing_count = source_run.specific_listing_count
+                query.zero_result_reason = source_run.zero_result_reason
                 return results
             except asyncio.TimeoutError:
                 source_run.status = HardwareSourceRunStatus.TIMEOUT
                 source_run.error_message = "Source timed out without blocking the scan."
+                source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_TIMEOUT
                 query.status = HardwareSourceRunStatus.TIMEOUT
+                query.zero_result_reason = source_run.zero_result_reason
                 return []
             except Exception as exc:
                 source_run.status = self._status_from_exception(exc)
                 source_run.error_message = str(exc)[:500]
+                source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_BLOCKED if source_run.status == HardwareSourceRunStatus.BLOCKED else HardwareZeroResultReason.UNKNOWN
                 query.status = source_run.status
+                query.zero_result_reason = source_run.zero_result_reason
                 return []
             finally:
                 source_run.completed_at = utc_now()
@@ -346,6 +364,7 @@ class HardwareHunterDailyScheduler:
                     source_name=manual_adapter.source_name,
                     adapter_type=manual_adapter.adapter_type,
                     query="manual import",
+                    expanded_query="manual import",
                     category=category,
                     status=HardwareSourceRunStatus.SEARCHING,
                     started_at=utc_now(),
@@ -511,6 +530,17 @@ class HardwareHunterDailyScheduler:
         if "403" in message or "captcha" in message or "blocked" in message:
             return HardwareSourceRunStatus.BLOCKED
         return HardwareSourceRunStatus.FAILED
+
+    def _zero_result_reason(self, source_run: HardwareSourceRun, results: list[RawHardwareListing]) -> HardwareZeroResultReason | None:
+        if source_run.result_count > 0 and source_run.specific_listing_count == 0:
+            return HardwareZeroResultReason.NO_SPECIFIC_LISTING
+        if source_run.result_count > 0:
+            return None
+        if source_run.state_code:
+            return HardwareZeroResultReason.STATE_FILTER_TOO_STRICT
+        if source_run.query_template and len(source_run.query_template.split()) >= 3:
+            return HardwareZeroResultReason.QUERY_TOO_NARROW
+        return HardwareZeroResultReason.NO_INDEXED_RESULTS
 
     def _refresh_next_run(self) -> None:
         self.scheduler_state.daily_report_hour = self.settings.hardware_hunter_daily_report_hour

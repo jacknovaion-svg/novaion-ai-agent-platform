@@ -233,6 +233,7 @@ export type HardwareDailyScanPayload = {
   test_run: boolean;
   max_results_per_query: number;
   max_queries_per_category: number;
+  scan_depth?: "quick" | "standard" | "deep";
   send_telegram: boolean;
   manual_urls?: string[];
   manual_text?: string | null;

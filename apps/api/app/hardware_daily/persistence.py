@@ -463,6 +463,16 @@ class HardwareDailyPersistence:
                   add column if not exists notes text,
                   add column if not exists reviewed_by text,
                   add column if not exists reviewed_at timestamptz;
+
+                alter table hardware_source_runs
+                  add column if not exists expanded_query text,
+                  add column if not exists query_template_id text,
+                  add column if not exists query_template text,
+                  add column if not exists state_code text,
+                  add column if not exists state_name text,
+                  add column if not exists scan_depth text not null default 'standard',
+                  add column if not exists specific_listing_count integer not null default 0,
+                  add column if not exists zero_result_reason text;
                 """
             )
 
@@ -471,13 +481,19 @@ class HardwareDailyPersistence:
             text(
                 """
                 insert into hardware_source_runs
-                  (id, scan_job_id, source_name, adapter_type, query, category, status, result_count, started_at, completed_at, error_message)
+                  (id, scan_job_id, source_name, adapter_type, query, expanded_query, query_template_id, query_template, state_code,
+                   state_name, scan_depth, category, status, result_count, specific_listing_count, zero_result_reason,
+                   started_at, completed_at, error_message)
                 values
-                  (:id, :scan_job_id, :source_name, :adapter_type, :query, :category, :status, :result_count, :started_at, :completed_at, :error_message)
+                  (:id, :scan_job_id, :source_name, :adapter_type, :query, :expanded_query, :query_template_id, :query_template,
+                   :state_code, :state_name, :scan_depth, :category, :status, :result_count, :specific_listing_count,
+                   :zero_result_reason, :started_at, :completed_at, :error_message)
                 on conflict (id) do update set
                   scan_job_id = excluded.scan_job_id,
                   status = excluded.status,
                   result_count = excluded.result_count,
+                  specific_listing_count = excluded.specific_listing_count,
+                  zero_result_reason = excluded.zero_result_reason,
                   completed_at = excluded.completed_at,
                   error_message = excluded.error_message
                 """
@@ -488,9 +504,17 @@ class HardwareDailyPersistence:
                 "source_name": run.source_name,
                 "adapter_type": run.adapter_type,
                 "query": run.query,
+                "expanded_query": run.expanded_query,
+                "query_template_id": run.query_template_id,
+                "query_template": run.query_template,
+                "state_code": run.state_code,
+                "state_name": run.state_name,
+                "scan_depth": run.scan_depth.value,
                 "category": run.category.value if run.category else None,
                 "status": run.status.value,
                 "result_count": run.result_count,
+                "specific_listing_count": run.specific_listing_count,
+                "zero_result_reason": run.zero_result_reason.value if run.zero_result_reason else None,
                 "started_at": run.started_at,
                 "completed_at": run.completed_at,
                 "error_message": run.error_message,
