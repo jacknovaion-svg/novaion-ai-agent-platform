@@ -186,6 +186,9 @@ class RawHardwareListing(BaseModel):
 
 class HardwareOpportunity(BaseModel):
     opportunity_id: UUID = Field(default_factory=uuid4)
+    first_seen_job_id: UUID | None = None
+    last_seen_job_id: UUID | None = None
+    last_updated_job_id: UUID | None = None
     category: HardwareCategory
     subcategory: str | None = None
     title: str

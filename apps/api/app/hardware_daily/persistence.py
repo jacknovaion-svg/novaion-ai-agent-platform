@@ -68,6 +68,7 @@ class HardwareDailyPersistence:
             with self.engine.connect() as connection:
                 connection.execute(text("select 1"))
             self._run_migrations()
+            self._ensure_job_tracking_columns()
             self.status = HardwarePersistenceStatus(
                 mode="postgresql",
                 database_health="healthy",
@@ -142,7 +143,12 @@ class HardwareDailyPersistence:
         except Exception as exc:
             self._mark_write_error(exc)
 
-    def remember_opportunity(self, key: str, current: HardwareOpportunity) -> tuple[HardwareOpportunity, list[HardwareChangeType]]:
+    def remember_opportunity(
+        self,
+        key: str,
+        current: HardwareOpportunity,
+        scan_job_id: UUID | None = None,
+    ) -> tuple[HardwareOpportunity, list[HardwareChangeType]]:
         if not self.engine:
             return current, [HardwareChangeType.NEW]
         identity = self.identity_key(current) or key
@@ -153,12 +159,19 @@ class HardwareDailyPersistence:
                 if previous:
                     current.opportunity_id = previous.opportunity_id
                     current.first_seen_at = previous.first_seen_at
+                    current.first_seen_job_id = previous.first_seen_job_id
+                    current.last_seen_job_id = scan_job_id or previous.last_seen_job_id
+                    current.last_updated_job_id = previous.last_updated_job_id
                     current.last_seen_at = utc_now()
                     if changes:
                         current.last_changed_at = utc_now()
+                        current.last_updated_job_id = scan_job_id or previous.last_updated_job_id
                 else:
                     changes = [HardwareChangeType.NEW]
-                self._upsert_opportunity(connection, identity, current)
+                    current.first_seen_job_id = scan_job_id
+                    current.last_seen_job_id = scan_job_id
+                    current.last_updated_job_id = scan_job_id
+                self._upsert_opportunity(connection, identity, current, scan_job_id=scan_job_id)
                 self._insert_snapshot(connection, current)
                 self._insert_price_status_history(connection, identity, previous, current, changes)
             self._mark_write_success()
@@ -404,22 +417,46 @@ class HardwareDailyPersistence:
                 for row in connection.execute(text("select version from schema_migrations")).all()
             }
 
-        if "20260701_hardware_hunter_v23_persistence" in applied_versions:
-            return
+        legacy_schema_ready = "20260701_hardware_hunter_v23_persistence" in applied_versions
 
         for path in files:
             if path.stem in applied_versions:
                 continue
             with self.engine.begin() as connection:
-                self._repair_schema_for_legacy_tables(connection)
+                if not legacy_schema_ready:
+                    self._repair_schema_for_legacy_tables(connection)
                 sql = path.read_text(encoding="utf-8")
                 for statement in self._split_sql(sql):
                     connection.exec_driver_sql(statement)
-                self._repair_schema_for_legacy_tables(connection)
+                if not legacy_schema_ready:
+                    self._repair_schema_for_legacy_tables(connection)
                 connection.execute(
                     text("insert into schema_migrations(version) values (:version) on conflict (version) do nothing"),
                     {"version": path.stem},
                 )
+                if path.stem == "20260701_hardware_hunter_v23_persistence":
+                    legacy_schema_ready = True
+
+    def _ensure_job_tracking_columns(self) -> None:
+        if not self.engine:
+            return
+        with self.engine.begin() as connection:
+            connection.exec_driver_sql(
+                """
+                alter table hardware_opportunities
+                  add column if not exists first_seen_job_id uuid,
+                  add column if not exists last_seen_job_id uuid,
+                  add column if not exists last_updated_job_id uuid;
+
+                update hardware_opportunities
+                set
+                  first_seen_job_id = coalesce(first_seen_job_id, scan_job_id),
+                  last_seen_job_id = coalesce(last_seen_job_id, scan_job_id),
+                  last_updated_job_id = coalesce(last_updated_job_id, scan_job_id)
+                where scan_job_id is not null
+                  and (first_seen_job_id is null or last_seen_job_id is null or last_updated_job_id is null);
+                """
+            )
 
     def _upsert_source_run(self, connection, job_id: UUID, run: HardwareSourceRun) -> None:
         connection.execute(
@@ -459,7 +496,8 @@ class HardwareDailyPersistence:
                 """
                 insert into hardware_opportunities
                   (
-                    id, scan_job_id, unique_key, source, source_url, canonical_url, source_listing_id, lot_number, category,
+                    id, scan_job_id, first_seen_job_id, last_seen_job_id, last_updated_job_id,
+                    unique_key, source, source_url, canonical_url, source_listing_id, lot_number, category,
                     title, manufacturer, model, part_number, generation, configuration, quantity, quantity_status,
                     unit_price, total_price, current_price, current_total_cost, buyer_premium, buyer_premium_amount,
                     estimated_tax, estimated_shipping, estimated_landed_cost, cost_per_unit, cost_per_gb, cost_confidence,
@@ -478,7 +516,8 @@ class HardwareDailyPersistence:
                   )
                 values
                   (
-                    :id, :scan_job_id, :unique_key, :source, :source_url, :canonical_url, :source_listing_id, :lot_number, :category,
+                    :id, :scan_job_id, :first_seen_job_id, :last_seen_job_id, :last_updated_job_id,
+                    :unique_key, :source, :source_url, :canonical_url, :source_listing_id, :lot_number, :category,
                     :title, :manufacturer, :model, :part_number, :generation, :configuration, :quantity, :quantity_status,
                     :unit_price, :total_price, :current_price, :current_total_cost, :buyer_premium, :buyer_premium_amount,
                     :estimated_tax, :estimated_shipping, :estimated_landed_cost, :cost_per_unit, :cost_per_gb, :cost_confidence,
@@ -497,6 +536,12 @@ class HardwareDailyPersistence:
                   )
                 on conflict (unique_key) where unique_key is not null do update set
                   scan_job_id = coalesce(excluded.scan_job_id, hardware_opportunities.scan_job_id),
+                  first_seen_job_id = coalesce(hardware_opportunities.first_seen_job_id, excluded.first_seen_job_id),
+                  last_seen_job_id = coalesce(excluded.last_seen_job_id, hardware_opportunities.last_seen_job_id),
+                  last_updated_job_id = case
+                    when excluded.last_changed_at is not null then coalesce(excluded.last_updated_job_id, hardware_opportunities.last_updated_job_id)
+                    else hardware_opportunities.last_updated_job_id
+                  end,
                   source_url = excluded.source_url,
                   canonical_url = excluded.canonical_url,
                   title = excluded.title,
@@ -722,9 +767,15 @@ class HardwareDailyPersistence:
         return HardwareOpportunity.model_validate(payload)
 
     def _opportunity_params(self, unique_key: str, opportunity: HardwareOpportunity, payload: dict, scan_job_id: UUID | None) -> dict:
+        first_seen_job_id = opportunity.first_seen_job_id or scan_job_id
+        last_seen_job_id = scan_job_id or opportunity.last_seen_job_id
+        last_updated_job_id = scan_job_id if opportunity.last_changed_at else opportunity.last_updated_job_id
         return {
             "id": str(opportunity.opportunity_id),
             "scan_job_id": str(scan_job_id) if scan_job_id else None,
+            "first_seen_job_id": str(first_seen_job_id) if first_seen_job_id else None,
+            "last_seen_job_id": str(last_seen_job_id) if last_seen_job_id else None,
+            "last_updated_job_id": str(last_updated_job_id) if last_updated_job_id else None,
             "unique_key": unique_key,
             "source": opportunity.source,
             "source_url": opportunity.source_url,
@@ -858,6 +909,9 @@ class HardwareDailyPersistence:
               if to_regclass('public.hardware_opportunities') is not null then
                 alter table hardware_opportunities
                   add column if not exists scan_job_id uuid,
+                  add column if not exists first_seen_job_id uuid,
+                  add column if not exists last_seen_job_id uuid,
+                  add column if not exists last_updated_job_id uuid,
                   add column if not exists subcategory text,
                   add column if not exists canonical_url text,
                   add column if not exists unique_key text,

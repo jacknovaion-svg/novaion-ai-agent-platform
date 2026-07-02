@@ -119,7 +119,7 @@ class HardwareHunterDailyScheduler:
             stats.duplicates_removed = duplicates_removed
             for opportunity in deduped:
                 key = self.normalizer.opportunity_key(opportunity)
-                saved, changes = hardware_daily_store.remember_opportunity(key, opportunity)
+                saved, changes = hardware_daily_store.remember_opportunity(key, opportunity, job_id=job.id)
                 saved.change_types = changes
                 is_current = self._is_current_opportunity(saved)
                 if is_current and "NEW" in {change.value for change in changes}:

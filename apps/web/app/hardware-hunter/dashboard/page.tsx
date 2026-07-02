@@ -34,6 +34,7 @@ const tabs = ["overview", "opportunities", "source runs", "telegram reports"] as
 type Tab = (typeof tabs)[number];
 type SortBy = "score" | "newest" | "price" | "auction" | "risk";
 type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" | "history" | "missing_components" | "pickup_only";
+type ResultScope = "current_scan" | "all_current" | "selected_states";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
 type ScanPreset =
   | "full_hardware_scan"
@@ -144,6 +145,8 @@ export default function HardwareDashboardPage() {
   const [showSources, setShowSources] = useState(false);
   const [sortBy, setSortBy] = useState<SortBy>("score");
   const [opportunityFilter, setOpportunityFilter] = useState<OpportunityFilter>("current");
+  const [resultScope, setResultScope] = useState<ResultScope>("current_scan");
+  const [stateFilter, setStateFilter] = useState("all");
   const [selectedOpportunity, setSelectedOpportunity] = useState<HardwareOpportunity | null>(null);
   const [telegramOpen, setTelegramOpen] = useState(false);
   const [recheckSummary, setRecheckSummary] = useState<string | null>(null);
@@ -158,9 +161,19 @@ export default function HardwareDashboardPage() {
     ]),
     [dashboard?.history_opportunities, dashboard?.needs_review_opportunities, dashboard?.top_opportunities, job?.opportunities],
   );
-  const currentOpportunities = useMemo(() => getCurrentOpportunities(allKnownOpportunities), [allKnownOpportunities]);
-  const needsReviewOpportunities = useMemo(() => getNeedsReviewOpportunities(allKnownOpportunities), [allKnownOpportunities]);
-  const historyOpportunities = useMemo(() => getHistoryOpportunities(allKnownOpportunities), [allKnownOpportunities]);
+  const latestJob = job ?? dashboard?.latest_job ?? null;
+  const latestJobId = latestJob?.id ?? null;
+  const availableStateFilters = useMemo(
+    () => buildStateFilters(allKnownOpportunities, latestJob?.states ?? selectedStates),
+    [allKnownOpportunities, latestJob?.states, selectedStates],
+  );
+  const scopedOpportunities = useMemo(
+    () => getScopedOpportunities(allKnownOpportunities, resultScope, latestJobId, stateFilter, selectedStates, latestJob?.opportunities ?? []),
+    [allKnownOpportunities, latestJobId, latestJob?.opportunities, resultScope, selectedStates, stateFilter],
+  );
+  const currentOpportunities = useMemo(() => getCurrentOpportunities(scopedOpportunities), [scopedOpportunities]);
+  const needsReviewOpportunities = useMemo(() => getNeedsReviewOpportunities(scopedOpportunities), [scopedOpportunities]);
+  const historyOpportunities = useMemo(() => getHistoryOpportunities(scopedOpportunities), [scopedOpportunities]);
   const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
@@ -176,6 +189,8 @@ export default function HardwareDashboardPage() {
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob(latest);
       if (["completed", "partially_completed", "failed"].includes(latest.status)) {
+        setResultScope("current_scan");
+        if (latest.states.length === 1) setStateFilter(latest.states[0]);
         window.clearInterval(timer);
         await refreshDashboard();
       }
@@ -184,12 +199,12 @@ export default function HardwareDashboardPage() {
   }, [activeJobId, job?.status]);
 
   const filteredOpportunities = useMemo(
-    () => filterOpportunities(allKnownOpportunities, opportunityFilter, {
+    () => filterOpportunities(scopedOpportunities, opportunityFilter, {
       current: currentOpportunities,
       needsReview: needsReviewOpportunities,
       history: historyOpportunities,
     }),
-    [allKnownOpportunities, currentOpportunities, historyOpportunities, needsReviewOpportunities, opportunityFilter],
+    [scopedOpportunities, currentOpportunities, historyOpportunities, needsReviewOpportunities, opportunityFilter],
   );
   const sortedOpportunities = useMemo(() => sortOpportunities(filteredOpportunities, sortBy), [filteredOpportunities, sortBy]);
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
@@ -210,6 +225,14 @@ export default function HardwareDashboardPage() {
   }, [busy, job?.status, scanProgress.isScanning]);
   const auctionEndingCount = useMemo(
     () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("AUCTION_ENDING") || item.listing_status === "ending_soon").length,
+    [currentOpportunities],
+  );
+  const scopedNewCount = useMemo(
+    () => currentOpportunities.filter((item) => (item.change_types ?? []).includes("NEW")).length,
+    [currentOpportunities],
+  );
+  const scopedChangedCount = useMemo(
+    () => currentOpportunities.filter((item) => (item.change_types ?? []).some((change) => change !== "NEW")).length,
     [currentOpportunities],
   );
 
@@ -237,6 +260,9 @@ export default function HardwareDashboardPage() {
         send_telegram: false,
       });
       setJob(created);
+      setResultScope("current_scan");
+      const requestedStates = regionStrategy === "all_us" ? [] : selectedStates;
+      setStateFilter(requestedStates.length === 1 ? requestedStates[0] : "all");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed");
     } finally {
@@ -545,10 +571,64 @@ export default function HardwareDashboardPage() {
         {recheckSummary ? <p className="muted">{recheckSummary}</p> : null}
       </section>
 
+      <section className="panel compact-panel">
+        <div className="panel-head">
+          <div>
+            <div className="section-label">Result Scope / 结果范围</div>
+            <h2>{resultScopeTitle(resultScope)}</h2>
+            <p className="muted">
+              {resultScope === "current_scan"
+                ? `Scan Job: ${latestJobId ?? "none"} · Scanned States: ${(latestJob?.states ?? []).join(", ") || "All / unknown"} · Scan Time: ${latestJob?.created_at ? new Date(latestJob.created_at).toLocaleString() : "none"}`
+                : resultScope === "all_current"
+                  ? "Showing all active and ending-soon opportunities currently stored in the database."
+                  : "Showing opportunities filtered by selected state."}
+            </p>
+          </div>
+          <div className="dashboard-actions no-margin">
+            <button
+              className={`button secondary ${resultScope === "current_scan" ? "active" : ""}`}
+              onClick={() => {
+                setResultScope("current_scan");
+                if ((latestJob?.states ?? []).length === 1) setStateFilter(latestJob?.states[0] ?? "all");
+              }}
+            >
+              Current Scan / 本次扫描
+            </button>
+            <button
+              className={`button secondary ${resultScope === "all_current" ? "active" : ""}`}
+              onClick={() => {
+                setResultScope("all_current");
+                setStateFilter("all");
+              }}
+            >
+              All Current / 全部当前机会
+            </button>
+            <button
+              className={`button secondary ${resultScope === "selected_states" ? "active" : ""}`}
+              onClick={() => {
+                setResultScope("selected_states");
+                setStateFilter("all");
+              }}
+            >
+              Selected States / 当前选择州
+            </button>
+            <label className="field compact-field sort-field">
+              <span>State Filter</span>
+              <select className="select" value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+                <option value="all">All States</option>
+                {availableStateFilters.map((state) => (
+                  <option value={state} key={state}>{state}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      </section>
+
       <section className="metric-grid dashboard-metrics">
         <Metric label="Final Opportunities" value={currentOpportunities.length} />
-        <Metric label="New" value={stats?.new_opportunities ?? 0} />
-        <Metric label="Changed" value={stats?.changed_opportunities ?? 0} />
+        <Metric label="New" value={scopedNewCount} />
+        <Metric label="Changed" value={scopedChangedCount} />
         <Metric label="Auction Ending" value={auctionEndingCount} />
         <Metric label="Needs Review" value={needsReviewOpportunities.length} />
         <Metric label="History" value={historyOpportunities.length} />
@@ -569,7 +649,7 @@ export default function HardwareDashboardPage() {
             <div className="panel-head">
               <div>
                 <div className="section-label">Top Opportunities</div>
-                <h2>Best current candidates</h2>
+                <h2>{resultScopeTitle(resultScope)}</h2>
                 <p className="muted">Showing {Math.min(currentOpportunities.length, 12)} of {currentOpportunities.length} current opportunities</p>
               </div>
               <button className="button secondary" onClick={() => setActiveTab("opportunities")}>
@@ -579,6 +659,7 @@ export default function HardwareDashboardPage() {
             <OpportunityTable
               opportunities={sortOpportunities(currentOpportunities, sortBy).slice(0, 12)}
               onView={setSelectedOpportunity}
+              emptyMessage={emptyOpportunityMessage(resultScope, latestJob?.states ?? [], stateFilter)}
               compact
             />
           </section>
@@ -643,7 +724,11 @@ export default function HardwareDashboardPage() {
               </select>
             </label>
           </div>
-          <OpportunityTable opportunities={sortedOpportunities} onView={setSelectedOpportunity} />
+          <OpportunityTable
+            opportunities={sortedOpportunities}
+            onView={setSelectedOpportunity}
+            emptyMessage={emptyOpportunityMessage(resultScope, latestJob?.states ?? [], stateFilter)}
+          />
         </section>
       ) : null}
 
@@ -736,15 +821,17 @@ function StatusPill({ label, value }: { label: string; value: string }) {
 function OpportunityTable({
   opportunities,
   onView,
+  emptyMessage = "No formal specific listings yet.",
   compact = false,
 }: {
   opportunities: HardwareOpportunity[];
   onView: (opportunity: HardwareOpportunity) => void;
+  emptyMessage?: string;
   compact?: boolean;
 }) {
   const rows = opportunities ?? [];
   if (!rows.length) {
-    return <div className="muted empty-state">No formal specific listings yet.</div>;
+    return <div className="muted empty-state">{emptyMessage}</div>;
   }
   return (
     <div className="table-wrap compact-table-wrap">
@@ -1059,6 +1146,74 @@ function uniqueOpportunities(opportunities: HardwareOpportunity[]) {
     output.push(item);
   }
   return output;
+}
+
+function getScopedOpportunities(
+  opportunities: HardwareOpportunity[],
+  scope: ResultScope,
+  latestJobId: string | null,
+  stateFilter: string,
+  selectedStateCodes: string[],
+  jobOpportunities: HardwareOpportunity[],
+) {
+  const jobOpportunityIds = new Set(jobOpportunities.map((item) => item.opportunity_id));
+  let scoped = opportunities;
+  if (scope === "current_scan") {
+    scoped = latestJobId
+      ? opportunities.filter((item) => isOpportunityFromJob(item, latestJobId, jobOpportunityIds))
+      : [];
+  } else if (scope === "all_current") {
+    scoped = getCurrentOpportunities(opportunities);
+  } else if (scope === "selected_states" && stateFilter === "all") {
+    const selected = new Set(selectedStateCodes.map(normalizeStateCode).filter(Boolean));
+    scoped = selected.size ? scoped.filter((item) => selected.has(normalizeStateCode(item.location_state))) : [];
+  }
+  if (stateFilter !== "all") {
+    scoped = scoped.filter((item) => normalizeStateCode(item.location_state) === stateFilter);
+  }
+  return scoped;
+}
+
+function isOpportunityFromJob(item: HardwareOpportunity, jobId: string, jobOpportunityIds: Set<string>) {
+  return item.last_seen_job_id === jobId
+    || item.last_updated_job_id === jobId
+    || item.first_seen_job_id === jobId
+    || jobOpportunityIds.has(item.opportunity_id);
+}
+
+function buildStateFilters(opportunities: HardwareOpportunity[], preferredStates: string[]) {
+  const states = new Set<string>();
+  preferredStates.forEach((state) => {
+    const normalized = normalizeStateCode(state);
+    if (normalized) states.add(normalized);
+  });
+  opportunities.forEach((item) => {
+    const normalized = normalizeStateCode(item.location_state);
+    if (normalized) states.add(normalized);
+  });
+  return [...states].sort();
+}
+
+function normalizeStateCode(value?: string | null) {
+  if (!value) return "";
+  return stateLookup.get(value.trim().toLowerCase()) ?? value.trim().toUpperCase();
+}
+
+function resultScopeTitle(scope: ResultScope) {
+  if (scope === "current_scan") return "Current Scan Opportunities";
+  if (scope === "all_current") return "All Current Opportunities";
+  return "Selected States Opportunities";
+}
+
+function emptyOpportunityMessage(scope: ResultScope, states: string[], stateFilter: string) {
+  const stateLabel = stateFilter !== "all" ? stateFilter : states.length === 1 ? states[0] : "";
+  if (scope === "current_scan") {
+    return stateLabel
+      ? `No current opportunities found in this scan. / 本次${stateLabel}扫描未发现当前有效机会。`
+      : "No current opportunities found in this scan. / 本次扫描未发现当前有效机会。";
+  }
+  if (scope === "all_current") return "No current opportunities found in the database.";
+  return stateLabel ? `No opportunities found for ${stateLabel}.` : "No opportunities found for the selected state filter.";
 }
 
 function stableOpportunityKey(item: HardwareOpportunity, index = 0) {

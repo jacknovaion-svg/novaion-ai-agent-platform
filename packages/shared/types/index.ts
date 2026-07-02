@@ -244,6 +244,9 @@ export interface HardwareSourceRun {
 
 export interface HardwareOpportunity {
   opportunity_id: string;
+  first_seen_job_id?: string | null;
+  last_seen_job_id?: string | null;
+  last_updated_job_id?: string | null;
   category: HardwareCategory;
   subcategory?: string | null;
   title: string;

@@ -45,21 +45,32 @@ class HardwareDailyMemoryStore:
     def list_jobs(self) -> list[HardwareScanJob]:
         return sorted(self.jobs.values(), key=lambda job: job.created_at, reverse=True)
 
-    def remember_opportunity(self, key: str, current: HardwareOpportunity) -> tuple[HardwareOpportunity, list[HardwareChangeType]]:
+    def remember_opportunity(
+        self,
+        key: str,
+        current: HardwareOpportunity,
+        job_id: UUID | None = None,
+    ) -> tuple[HardwareOpportunity, list[HardwareChangeType]]:
         if hardware_daily_persistence.enabled:
-            saved, changes = hardware_daily_persistence.remember_opportunity(key, current)
+            saved, changes = hardware_daily_persistence.remember_opportunity(key, current, scan_job_id=job_id)
             self.opportunities_by_key[hardware_daily_persistence.identity_key(saved)] = saved
             return saved, changes
         previous = self.opportunities_by_key.get(key)
         changes: list[HardwareChangeType] = []
         if previous is None:
             changes.append(HardwareChangeType.NEW)
+            current.first_seen_job_id = job_id
+            current.last_seen_job_id = job_id
+            current.last_updated_job_id = job_id
             self.opportunities_by_key[key] = current
             self._record_history(key, current)
             return current, changes
 
         current.opportunity_id = previous.opportunity_id
         current.first_seen_at = previous.first_seen_at
+        current.first_seen_job_id = previous.first_seen_job_id
+        current.last_seen_job_id = job_id or previous.last_seen_job_id
+        current.last_updated_job_id = previous.last_updated_job_id
         current.last_seen_at = utc_now()
         if current.total_price != previous.total_price or current.unit_price != previous.unit_price:
             changes.append(HardwareChangeType.PRICE_CHANGED)
@@ -69,6 +80,7 @@ class HardwareDailyMemoryStore:
             changes.append(HardwareChangeType.STATUS_CHANGED)
         if changes:
             current.last_changed_at = utc_now()
+            current.last_updated_job_id = job_id or previous.last_updated_job_id
             self._record_history(key, current)
         self.opportunities_by_key[key] = current
         return current, changes
