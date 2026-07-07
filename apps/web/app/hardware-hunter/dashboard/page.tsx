@@ -62,7 +62,7 @@ type ReviewFormPayload = {
   review_notes: string;
 };
 
-const sourceCount = 2;
+const sourceCount = 3;
 const scanDepthQueryCounts: Record<ScanDepth, number> = {
   quick: 2,
   standard: 5,

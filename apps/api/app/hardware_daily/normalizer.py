@@ -389,10 +389,30 @@ class HardwareListingNormalizer:
         return "unknown"
 
     def _confidence(self, source_name: str, domain: str | None) -> ConfidenceLevel:
-        official_domains = ["govdeals.com", "publicsurplus.com", "ebay.com", "hgpauction.com"]
+        official_domains = [
+            "govdeals.com",
+            "publicsurplus.com",
+            "municibid.com",
+            "gsaauctions.gov",
+            "allsurplus.com",
+            "bidspotter.com",
+            "proxibid.com",
+            "ebay.com",
+            "hgpauction.com",
+        ]
         if domain in official_domains:
             return ConfidenceLevel.MARKETPLACE_LISTING
-        if source_name in {"GovDeals", "Public Surplus", "eBay", "HGP Industrial Auctions"}:
+        if source_name in {
+            "GovDeals",
+            "Public Surplus",
+            "Municibid",
+            "GSA Auctions",
+            "AllSurplus",
+            "BidSpotter",
+            "Proxibid",
+            "eBay",
+            "HGP Industrial Auctions",
+        }:
             return ConfidenceLevel.PUBLIC_SEARCH_DISCOVERY
         return ConfidenceLevel.NEEDS_VERIFICATION
 

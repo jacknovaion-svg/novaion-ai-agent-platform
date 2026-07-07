@@ -50,6 +50,7 @@ class HardwareHunterDailyScheduler:
         self._active_tasks: set[UUID] = set()
         self._queued_tasks: set[UUID] = set()
         self._loop_task: asyncio.Task | None = None
+        self._store_write_lock = asyncio.Lock()
         self._recover_interrupted_job()
         self._recover_stale_running_jobs()
         self._recover_orphaned_source_runs()
@@ -152,7 +153,7 @@ class HardwareHunterDailyScheduler:
                 max_queries_per_category=request.max_queries_per_category,
                 scan_depth=request.scan_depth,
             )
-            hardware_daily_store.update_job(job)
+            await self._update_job_async(job)
 
             raw_results: list[RawHardwareListing] = []
             if request.mode in {HardwareScanMode.ASSET_LISTING_SEARCH, HardwareScanMode.BOTH}:
@@ -176,7 +177,7 @@ class HardwareHunterDailyScheduler:
             stats.duplicates_removed = duplicates_removed
             for opportunity in deduped:
                 key = self.normalizer.opportunity_key(opportunity)
-                saved, changes = hardware_daily_store.remember_opportunity(key, opportunity, job_id=job.id)
+                saved, changes = await self._remember_opportunity_async(key, opportunity, job.id)
                 saved.change_types = changes
                 is_current = self._is_current_opportunity(saved)
                 if is_current and "NEW" in {change.value for change in changes}:
@@ -201,14 +202,14 @@ class HardwareHunterDailyScheduler:
             report_action = "approve_and_send" if request.send_telegram else "preview"
             job.report = await self.reporter.build_and_send(job, action=report_action)
             job.completed_at = utc_now()
-            hardware_daily_store.update_job(job)
-            hardware_daily_persistence.save_scan_job(job)
+            await self._update_job_async(job)
+            await self._save_scan_job_async(job)
         except Exception as exc:
             job.status = HardwareScanJobStatus.FAILED
             job.error_message = str(exc)[:500]
             job.completed_at = utc_now()
-            hardware_daily_store.update_job(job)
-            hardware_daily_persistence.save_scan_job(job)
+            await self._update_job_async(job)
+            await self._save_scan_job_async(job)
             self.scheduler_state.last_error = str(exc)[:500]
         finally:
             self.scheduler_state.is_job_running = False
@@ -216,8 +217,24 @@ class HardwareHunterDailyScheduler:
             self.scheduler_state.last_job_id = job.id
             self.scheduler_state.last_run_at = job.completed_at or utc_now()
             self._refresh_next_run()
-            hardware_daily_store.save_scheduler_state(self.scheduler_state)
+            await self._save_scheduler_state_async()
             self._active_tasks.discard(job_id)
+
+    async def _update_job_async(self, job: HardwareScanJob) -> None:
+        async with self._store_write_lock:
+            await asyncio.to_thread(hardware_daily_store.update_job, job)
+
+    async def _save_scan_job_async(self, job: HardwareScanJob) -> None:
+        async with self._store_write_lock:
+            await asyncio.to_thread(hardware_daily_persistence.save_scan_job, job)
+
+    async def _save_scheduler_state_async(self) -> None:
+        async with self._store_write_lock:
+            await asyncio.to_thread(hardware_daily_store.save_scheduler_state, self.scheduler_state)
+
+    async def _remember_opportunity_async(self, key: str, opportunity, job_id: UUID):
+        async with self._store_write_lock:
+            return await asyncio.to_thread(hardware_daily_store.remember_opportunity, key, opportunity, job_id=job_id)
 
     def get_job(self, job_id: UUID) -> HardwareScanJob | None:
         return hardware_daily_store.get_job(job_id)
@@ -375,7 +392,7 @@ class HardwareHunterDailyScheduler:
                 started_at=utc_now(),
             )
             job.source_runs.append(source_run)
-            hardware_daily_store.update_job(job)
+            await self._update_job_async(job)
             try:
                 async with semaphore:
                     results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
@@ -410,7 +427,7 @@ class HardwareHunterDailyScheduler:
                 return []
             finally:
                 source_run.completed_at = utc_now()
-                hardware_daily_store.update_job(job)
+                await self._update_job_async(job)
 
         if selected_queries:
             batches = await asyncio.gather(*(run_query(query) for query in selected_queries))
@@ -666,8 +683,6 @@ class HardwareHunterDailyScheduler:
             return HardwareZeroResultReason.NO_SPECIFIC_LISTING
         if source_run.result_count > 0:
             return None
-        if source_run.state_code:
-            return HardwareZeroResultReason.STATE_FILTER_TOO_STRICT
         if source_run.query_template and len(source_run.query_template.split()) >= 3:
             return HardwareZeroResultReason.QUERY_TOO_NARROW
         return HardwareZeroResultReason.NO_INDEXED_RESULTS

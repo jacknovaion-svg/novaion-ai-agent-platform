@@ -42,6 +42,10 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             direct_results = await self._public_surplus_search(query, request)
             if direct_results:
                 return direct_results
+        if query.source_group == "Municibid":
+            direct_results = await self._municibid_search(query, request)
+            if direct_results:
+                return direct_results
         try:
             hits = await self.web_search.search(query.generated_query_en, max_results=request.max_results_per_query)
         except Exception:
@@ -118,6 +122,13 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                 "laptop",
                 "computer",
                 "itad",
+                "thinksystem",
+                "ucs",
+                "drive array",
+                "storage array",
+                "workstation",
+                "switch",
+                "networking",
             ]
         )
 
@@ -196,13 +207,105 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                 break
         return listings
 
+    async def _municibid_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
+        keyword = self._marketplace_keyword(query)
+        urls = [
+            f"https://municibid.com/Search?query={quote_plus(keyword)}",
+            f"https://municibid.com/Browse?search={quote_plus(keyword)}",
+        ]
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; NOVAIONHardwareHunter/2.5; +https://novaion.ai)"}
+        listings: list[RawHardwareListing] = []
+        seen: set[str] = set()
+        async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers=headers) as client:
+            for url in urls:
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                except Exception:
+                    continue
+                soup = BeautifulSoup(response.text, "html.parser")
+                for link in soup.select("a[href]"):
+                    href = link.get("href") or ""
+                    title = link.get_text(" ", strip=True)
+                    absolute_url = urljoin("https://municibid.com", href)
+                    parsed = urlparse(absolute_url)
+                    if "municibid.com" not in parsed.netloc.lower():
+                        continue
+                    if absolute_url in seen or not title:
+                        continue
+                    container = link.find_parent()
+                    snippet = container.get_text(" ", strip=True)[:500] if container else title
+                    if not self._is_relevant(title, snippet, "municibid.com"):
+                        continue
+                    if not self._is_category_relevant(query.category.value, title, snippet):
+                        continue
+                    classification = self.quality.classify("Municibid", absolute_url, title, snippet)
+                    if classification.page_type.value == "irrelevant":
+                        continue
+                    seen.add(absolute_url)
+                    listings.append(
+                        RawHardwareListing(
+                            source_name="Municibid",
+                            source_url=absolute_url,
+                            original_title=title,
+                            original_description=snippet,
+                            category=query.category,
+                            page_type=classification.page_type,
+                            classification_reason=classification.reason,
+                            raw_data={
+                                "query": query.generated_query_en,
+                                "direct_source_url": url,
+                                "domain": "municibid.com",
+                                "adapter_type": "municibid_html",
+                                "page_type": classification.page_type.value,
+                                "classification_reason": classification.reason,
+                            },
+                        )
+                    )
+                    if len(listings) >= request.max_results_per_query:
+                        return listings
+        return listings
+
     def _clean_source_query(self, query: str) -> str:
         cleaned = query
-        for token in ["site:publicsurplus.com", "site:govdeals.com", "site:ebay.com", "site:hgpauction.com"]:
+        for token in [
+            "site:publicsurplus.com",
+            "site:govdeals.com",
+            "site:municibid.com",
+            "site:gsaauctions.gov",
+            "site:allsurplus.com",
+            "site:bidspotter.com",
+            "site:proxibid.com",
+            "site:ebay.com",
+            "site:hgpauction.com",
+        ]:
             cleaned = cleaned.replace(token, "")
-        for token in ["Texas", "California", "Georgia", "TX", "CA", "GA", "lot", "bulk"]:
+        for token in [
+            "Texas",
+            "California",
+            "Georgia",
+            "Oregon",
+            "North Carolina",
+            "Oklahoma",
+            "TX",
+            "CA",
+            "GA",
+            "OR",
+            "NC",
+            "OK",
+            "lot",
+            "bulk",
+            "auction",
+            "surplus",
+        ]:
             cleaned = cleaned.replace(token, "")
         return " ".join(cleaned.split()) or "server"
+
+    def _marketplace_keyword(self, query) -> str:
+        template = getattr(query, "query_template", None)
+        if template:
+            return self._clean_source_query(str(template))
+        return self._clean_source_query(query.generated_query_en)
 
     def _public_surplus_keyword(self, query) -> str:
         template = getattr(query, "query_template", None)

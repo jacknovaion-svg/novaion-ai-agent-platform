@@ -8,16 +8,19 @@ from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, 
 ACTIVE_SOURCE_DOMAINS = {
     "GovDeals": "govdeals.com",
     "Public Surplus": "publicsurplus.com",
+    "Municibid": "municibid.com",
 }
 
 RESERVED_SOURCE_DOMAINS = {
-    "GSA Auctions": "gsaauctions.gov",
-    "AllSurplus": "allsurplus.com",
-    "Municibid": "municibid.com",
-    "BidSpotter": "bidspotter.com",
-    "Proxibid": "proxibid.com",
     "eBay": "ebay.com",
     "HGP Industrial Auctions": "hgpauction.com",
+    "GSA Auctions": "gsaauctions.gov",
+    "AllSurplus": "allsurplus.com",
+    "BidSpotter": "bidspotter.com",
+    "Proxibid": "proxibid.com",
+    "R2 Directory": "sustainableelectronics.org",
+    "e-Stewards Directory": "e-stewards.org",
+    "NAID AAA Directory": "isigmaonline.org",
 }
 
 
@@ -114,6 +117,18 @@ SCAN_DEPTH_LIMITS = {
     HardwareScanDepth.DEEP: 10,
 }
 
+SOURCE_QUERY_LIMITS = {
+    "GovDeals": 5,
+    "Public Surplus": 5,
+    "Municibid": 5,
+    "GSA Auctions": 3,
+    "AllSurplus": 3,
+    "BidSpotter": 3,
+    "Proxibid": 3,
+    "eBay": 3,
+    "HGP Industrial Auctions": 3,
+}
+
 
 class HardwareSearchQueryBuilder:
     def build(
@@ -131,8 +146,9 @@ class HardwareSearchQueryBuilder:
         for category in selected_categories:
             category_terms = CATEGORY_TERMS[category]
             for source_name, domain in ACTIVE_SOURCE_DOMAINS.items():
+                source_query_limit = min(query_limit, SOURCE_QUERY_LIMITS.get(source_name, query_limit))
                 for target in state_targets:
-                    for index, term in enumerate(category_terms[:query_limit], start=1):
+                    for index, term in enumerate(category_terms[:source_query_limit], start=1):
                         query = self._build_source_query(source_name, domain, term, target["location_phrase"])
                         dedupe_key = self._dedupe_key(source_name, category.value, term, target["state_code"], query)
                         if dedupe_key in seen:
@@ -175,6 +191,18 @@ class HardwareSearchQueryBuilder:
             parts = [f"site:{domain}/en/asset", quoted_term, "auction lot", location_phrase]
         elif source_name == "Public Surplus":
             parts = [f"site:{domain}/sms/auction/view", quoted_term, "surplus auction", location_phrase]
+        elif source_name == "Municibid":
+            parts = [f"site:{domain}", quoted_term, '"Computers & IT"', "government auction", location_phrase]
+        elif source_name == "GSA Auctions":
+            parts = [f"site:{domain}", quoted_term, "government auction", location_phrase]
+        elif source_name == "AllSurplus":
+            parts = [f"site:{domain}", quoted_term, "auction lot", "surplus", location_phrase]
+        elif source_name in {"BidSpotter", "Proxibid"}:
+            parts = [f"site:{domain}", quoted_term, "auction lot", location_phrase]
+        elif source_name == "eBay":
+            parts = [f"site:{domain}/itm", quoted_term, "lot", location_phrase]
+        elif source_name == "HGP Industrial Auctions":
+            parts = [f"site:{domain}", quoted_term, "industrial auction", location_phrase]
         else:
             parts = [f"site:{domain}", quoted_term, "auction surplus", location_phrase]
         return self._normalize_query(" ".join(part for part in parts if part))

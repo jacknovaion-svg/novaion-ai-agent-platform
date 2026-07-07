@@ -31,7 +31,17 @@ class HardwareResultQualityClassifier:
             return HardwarePageClassification(HardwareResultPageType.LISTING_COLLECTION, "Search/category/results page.")
         if self._is_source_page(path, text):
             return HardwarePageClassification(HardwareResultPageType.SOURCE_PAGE, "Company, service, or source landing page.")
-        if self._has_specific_lot_language(text) and source_name in {"GovDeals", "Public Surplus", "eBay", "HGP Industrial Auctions"}:
+        if self._has_specific_lot_language(text) and source_name in {
+            "GovDeals",
+            "Public Surplus",
+            "Municibid",
+            "GSA Auctions",
+            "AllSurplus",
+            "BidSpotter",
+            "Proxibid",
+            "eBay",
+            "HGP Industrial Auctions",
+        }:
             return HardwarePageClassification(HardwareResultPageType.SPECIFIC_LISTING, "Marketplace title looks like a specific lot.")
         return HardwarePageClassification(HardwareResultPageType.IRRELEVANT, "No specific lot/listing evidence.")
 
@@ -41,6 +51,16 @@ class HardwareResultQualityClassifier:
         if "ebay.com" in domain and ("/itm/" in path or re.search(r"/\d{10,}$", path)):
             return True
         if "publicsurplus.com" in domain and (query.get("auc") or query.get("auction") or "viewauction" in path or "view" in path):
+            return True
+        if "municibid.com" in domain and any(token in path for token in ["/listing", "/auction", "/item", "/product"]):
+            return True
+        if "gsaauctions.gov" in domain and any(token in path for token in ["/auction", "/asset", "/item", "/lot"]):
+            return True
+        if "allsurplus.com" in domain and any(token in path for token in ["/asset", "/auction", "/lot", "/item"]):
+            return True
+        if "bidspotter.com" in domain and any(token in path for token in ["/lot", "/auction", "/item"]):
+            return True
+        if "proxibid.com" in domain and any(token in path for token in ["/lot", "/asp/", "/auction", "/item"]):
             return True
         if "hgpauction.com" in domain and any(token in path for token in ["/lot/", "/lots/", "/item/", "/auction/"]) and self._has_specific_lot_language(text):
             return True
