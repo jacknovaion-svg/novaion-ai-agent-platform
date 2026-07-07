@@ -52,6 +52,7 @@ class HardwareHunterDailyScheduler:
         self._loop_task: asyncio.Task | None = None
         self._recover_interrupted_job()
         self._recover_stale_running_jobs()
+        self._recover_orphaned_source_runs()
         self._refresh_next_run()
 
     def _recover_interrupted_job(self) -> None:
@@ -62,6 +63,7 @@ class HardwareHunterDailyScheduler:
             job.status = HardwareScanJobStatus.FAILED
             job.error_message = "Previous scan was interrupted before completion and was cleared on backend startup."
             job.completed_at = utc_now()
+            self._mark_unfinished_source_runs_failed(job)
             hardware_daily_store.update_job(job)
         self.scheduler_state.is_job_running = False
         self.scheduler_state.current_job_id = None
@@ -80,16 +82,35 @@ class HardwareHunterDailyScheduler:
             job.status = HardwareScanJobStatus.FAILED
             job.error_message = "Scan was interrupted before completion and was cleared on backend startup."
             job.completed_at = now
-            for run in job.source_runs:
-                if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING}:
-                    run.status = HardwareSourceRunStatus.FAILED
-                    run.completed_at = now
-                    run.error_message = "Parent scan job was interrupted before completion."
+            self._mark_unfinished_source_runs_failed(job, now=now)
             hardware_daily_store.update_job(job)
             recovered += 1
         if recovered:
             self.scheduler_state.last_error = f"Recovered {recovered} stale running scan job(s) from previous backend process."
             hardware_daily_store.save_scheduler_state(self.scheduler_state)
+
+    def _recover_orphaned_source_runs(self) -> None:
+        recovered = 0
+        for job in hardware_daily_store.list_jobs():
+            if job.status in {HardwareScanJobStatus.CREATED, HardwareScanJobStatus.RUNNING}:
+                continue
+            if self._mark_unfinished_source_runs_failed(job):
+                hardware_daily_store.update_job(job)
+                recovered += 1
+        if recovered:
+            self.scheduler_state.last_error = f"Recovered unfinished source runs on {recovered} completed/interrupted scan job(s)."
+            hardware_daily_store.save_scheduler_state(self.scheduler_state)
+
+    def _mark_unfinished_source_runs_failed(self, job: HardwareScanJob, now=None) -> bool:
+        finished_at = now or utc_now()
+        changed = False
+        for run in job.source_runs:
+            if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING}:
+                run.status = HardwareSourceRunStatus.FAILED
+                run.completed_at = finished_at
+                run.error_message = "Parent scan job was interrupted before completion."
+                changed = True
+        return changed
 
     def start_background_loop(self) -> None:
         if self._loop_task and not self._loop_task.done():
