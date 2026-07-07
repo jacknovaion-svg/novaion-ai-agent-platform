@@ -195,7 +195,15 @@ class HardwareSourceRun(BaseModel):
     category: HardwareCategory | None = None
     status: HardwareSourceRunStatus = HardwareSourceRunStatus.PENDING
     result_count: int = 0
+    raw_results: int = 0
     specific_listing_count: int = 0
+    matched_state_results: int = 0
+    state_mismatch_results: int = 0
+    location_unknown_results: int = 0
+    filtered_out_results: int = 0
+    detected_states: list[str] = Field(default_factory=list)
+    state_match_status: str | None = None
+    filter_reason: str | None = None
     zero_result_reason: HardwareZeroResultReason | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
@@ -212,6 +220,11 @@ class RawHardwareListing(BaseModel):
     seller_name: str | None = None
     page_type: HardwareResultPageType = HardwareResultPageType.IRRELEVANT
     classification_reason: str | None = None
+    requested_states: list[str] = Field(default_factory=list)
+    detected_state: str | None = None
+    matched_requested_state: str | None = None
+    state_match_status: str | None = None
+    filter_reason: str | None = None
     detail_checked_at: datetime | None = None
     detail_parse_status: str = "not_checked"
     raw_data: dict[str, Any] = Field(default_factory=dict)
@@ -254,6 +267,11 @@ class HardwareOpportunity(BaseModel):
     location_city: str | None = None
     location_state: str | None = None
     zip_code: str | None = None
+    requested_states: list[str] = Field(default_factory=list)
+    detected_state: str | None = None
+    matched_requested_state: str | None = None
+    state_match_status: str | None = None
+    filter_reason: str | None = None
     pickup_only: bool | None = None
     shipping_available: bool | None = None
     auction_end_time: datetime | None = None
@@ -365,6 +383,10 @@ class HardwareQualityStats(BaseModel):
     source_pages: int = 0
     news_or_articles: int = 0
     irrelevant: int = 0
+    matched_state_results: int = 0
+    state_mismatch_results: int = 0
+    location_unknown_results: int = 0
+    filtered_out_results: int = 0
     duplicates_removed: int = 0
     new_opportunities: int = 0
     changed_opportunities: int = 0

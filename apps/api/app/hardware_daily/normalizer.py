@@ -53,6 +53,9 @@ class HardwareListingNormalizer:
         component_details = self._component_details(text, raw.category, quantity)
         cost_fields = self._cost_fields(total_price=total_price, current_price=current_price, quantity=quantity, category=raw.category, component_details=component_details)
         status = self._opportunity_status(listing_status)
+        state_match = raw.raw_data.get("state_match") or {}
+        requested_states = list(state_match.get("requested_states") or raw.raw_data.get("requested_states") or raw.requested_states or [])
+        detected_state = state_match.get("detected_state") or raw.raw_data.get("detected_state") or raw.detected_state or location_state
         return HardwareOpportunity(
             category=raw.category,
             subcategory=self._subcategory(raw.category, lower),
@@ -83,6 +86,11 @@ class HardwareListingNormalizer:
             location_city=detail.get("location_city"),
             location_state=location_state,
             zip_code=detail.get("zip_code"),
+            requested_states=requested_states,
+            detected_state=detected_state,
+            matched_requested_state=state_match.get("matched_requested_state") or raw.raw_data.get("matched_requested_state") or raw.matched_requested_state,
+            state_match_status=state_match.get("state_match_status") or raw.raw_data.get("state_match_status") or raw.state_match_status,
+            filter_reason=state_match.get("filter_reason") or raw.raw_data.get("filter_reason") or raw.filter_reason,
             pickup_only=detail.get("pickup_only") if isinstance(detail.get("pickup_only"), bool) else ("pickup only" in lower or "local pickup" in lower),
             shipping_available=detail.get("shipping_available") if isinstance(detail.get("shipping_available"), bool) else (None if "shipping" not in lower else "no shipping" not in lower),
             auction_end_time=end_time_utc,

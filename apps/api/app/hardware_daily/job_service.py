@@ -32,6 +32,7 @@ from app.hardware_daily.normalizer import HardwareListingNormalizer
 from app.hardware_daily.persistence import hardware_daily_persistence
 from app.hardware_daily.reporter import TelegramHardwareDailyReporter
 from app.hardware_daily.scoring import HardwareOpportunityScoringService
+from app.hardware_daily.state_matcher import hardware_state_matcher
 from app.hardware_daily.status_recheck import listing_status_recheck_service
 from app.hardware_daily.store import hardware_daily_store
 
@@ -50,6 +51,7 @@ class HardwareHunterDailyScheduler:
         self._queued_tasks: set[UUID] = set()
         self._loop_task: asyncio.Task | None = None
         self._recover_interrupted_job()
+        self._recover_stale_running_jobs()
         self._refresh_next_run()
 
     def _recover_interrupted_job(self) -> None:
@@ -65,6 +67,29 @@ class HardwareHunterDailyScheduler:
         self.scheduler_state.current_job_id = None
         self.scheduler_state.last_error = "Recovered interrupted scan from previous backend process."
         hardware_daily_store.save_scheduler_state(self.scheduler_state)
+
+    def _recover_stale_running_jobs(self) -> None:
+        current_job_id = self.scheduler_state.current_job_id if self.scheduler_state.is_job_running else None
+        recovered = 0
+        now = utc_now()
+        for job in hardware_daily_store.list_jobs():
+            if job.status not in {HardwareScanJobStatus.CREATED, HardwareScanJobStatus.RUNNING}:
+                continue
+            if current_job_id and job.id == current_job_id:
+                continue
+            job.status = HardwareScanJobStatus.FAILED
+            job.error_message = "Scan was interrupted before completion and was cleared on backend startup."
+            job.completed_at = now
+            for run in job.source_runs:
+                if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING}:
+                    run.status = HardwareSourceRunStatus.FAILED
+                    run.completed_at = now
+                    run.error_message = "Parent scan job was interrupted before completion."
+            hardware_daily_store.update_job(job)
+            recovered += 1
+        if recovered:
+            self.scheduler_state.last_error = f"Recovered {recovered} stale running scan job(s) from previous backend process."
+            hardware_daily_store.save_scheduler_state(self.scheduler_state)
 
     def start_background_loop(self) -> None:
         if self._loop_task and not self._loop_task.done():
@@ -113,9 +138,17 @@ class HardwareHunterDailyScheduler:
                 raw_results = await self._run_asset_searches(job, request)
 
             specific_raw_results = [raw for raw in raw_results if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING]
-            specific_raw_results = await self._enrich_specific_listings(specific_raw_results)
+            enriched_specific_results = await self._enrich_specific_listings(specific_raw_results)
+            raw_results = self._replace_enriched_results(raw_results, enriched_specific_results)
+            self._apply_state_matching(raw_results, job)
             stats = self._quality_stats(raw_results, job)
-            normalized = [listing_status_recheck_service._apply_status_rules(self.normalizer.normalize(raw)) for raw in specific_raw_results]
+            eligible_specific_results = [
+                raw
+                for raw in raw_results
+                if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING
+                and raw.raw_data.get("state_match_status") != "mismatched"
+            ]
+            normalized = [listing_status_recheck_service._apply_status_rules(self.normalizer.normalize(raw)) for raw in eligible_specific_results]
             deduped, duplicates_removed = self._dedupe(normalized)
             remembered = []
             stats.normalized_listings = len(normalized)
@@ -325,8 +358,14 @@ class HardwareHunterDailyScheduler:
             try:
                 async with semaphore:
                     results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
+                for result in results:
+                    result.raw_data["source_run_id"] = str(source_run.id)
+                    result.raw_data["requested_state"] = query.state_code
+                    result.raw_data["requested_states"] = [query.state_code] if query.state_code else []
+                    result.requested_states = [query.state_code] if query.state_code else []
                 source_run.status = HardwareSourceRunStatus.SUCCESS
                 source_run.result_count = len(results)
+                source_run.raw_results = len(results)
                 source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
                 source_run.zero_result_reason = self._zero_result_reason(source_run, results)
                 query.status = HardwareSourceRunStatus.SUCCESS
@@ -400,12 +439,78 @@ class HardwareHunterDailyScheduler:
                 enriched.append(raw)
         return enriched
 
+    def _replace_enriched_results(self, raw_results: list[RawHardwareListing], enriched_results: list[RawHardwareListing]) -> list[RawHardwareListing]:
+        by_url = {raw.source_url: raw for raw in enriched_results}
+        return [by_url.get(raw.source_url, raw) for raw in raw_results]
+
+    def _apply_state_matching(self, raw_results: list[RawHardwareListing], job: HardwareScanJob) -> None:
+        fallback_states = job.states or []
+        run_stats: dict[str, dict[str, object]] = {}
+        for raw in raw_results:
+            match = hardware_state_matcher.apply(raw, fallback_requested_states=fallback_states)
+            raw.requested_states = match.requested_states
+            raw.detected_state = match.detected_state
+            raw.matched_requested_state = match.matched_requested_state
+            raw.state_match_status = match.state_match_status
+            raw.filter_reason = match.filter_reason
+            source_run_id = str(raw.raw_data.get("source_run_id") or "")
+            if not source_run_id:
+                continue
+            stats = run_stats.setdefault(
+                source_run_id,
+                {
+                    "raw_results": 0,
+                    "matched_state_results": 0,
+                    "state_mismatch_results": 0,
+                    "location_unknown_results": 0,
+                    "filtered_out_results": 0,
+                    "detected_states": set(),
+                },
+            )
+            stats["raw_results"] = int(stats["raw_results"]) + 1
+            if match.detected_state:
+                stats["detected_states"].add(match.detected_state)  # type: ignore[union-attr]
+            if match.state_match_status == "matched":
+                stats["matched_state_results"] = int(stats["matched_state_results"]) + 1
+            elif match.state_match_status == "mismatched":
+                stats["state_mismatch_results"] = int(stats["state_mismatch_results"]) + 1
+                stats["filtered_out_results"] = int(stats["filtered_out_results"]) + 1
+            else:
+                stats["location_unknown_results"] = int(stats["location_unknown_results"]) + 1
+
+        for run in job.source_runs:
+            stats = run_stats.get(str(run.id))
+            if not stats:
+                continue
+            run.raw_results = int(stats["raw_results"])
+            run.matched_state_results = int(stats["matched_state_results"])
+            run.state_mismatch_results = int(stats["state_mismatch_results"])
+            run.location_unknown_results = int(stats["location_unknown_results"])
+            run.filtered_out_results = int(stats["filtered_out_results"])
+            run.detected_states = sorted(stats["detected_states"])  # type: ignore[arg-type]
+            if run.state_mismatch_results and not run.matched_state_results:
+                run.state_match_status = "mismatched"
+                run.filter_reason = "state_mismatch"
+                run.zero_result_reason = HardwareZeroResultReason.STATE_FILTER_TOO_STRICT
+            elif run.location_unknown_results and not run.matched_state_results:
+                run.state_match_status = "unknown"
+                run.filter_reason = "location_unknown"
+            else:
+                run.state_match_status = "matched" if run.matched_state_results else None
+
     def _quality_stats(self, raw_results: list[RawHardwareListing], job: HardwareScanJob) -> HardwareQualityStats:
         stats = HardwareQualityStats(
             raw_results=len(raw_results),
             failed_sources=len([run for run in job.source_runs if run.status in {HardwareSourceRunStatus.FAILED, HardwareSourceRunStatus.TIMEOUT, HardwareSourceRunStatus.BLOCKED}]),
         )
         for raw in raw_results:
+            if raw.raw_data.get("state_match_status") == "matched":
+                stats.matched_state_results += 1
+            elif raw.raw_data.get("state_match_status") == "mismatched":
+                stats.state_mismatch_results += 1
+                stats.filtered_out_results += 1
+            elif raw.raw_data.get("state_match_status") == "unknown":
+                stats.location_unknown_results += 1
             if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING:
                 stats.specific_listings += 1
             elif raw.page_type == HardwareResultPageType.LISTING_COLLECTION:
@@ -432,6 +537,8 @@ class HardwareHunterDailyScheduler:
         return output, duplicates
 
     def _is_current_opportunity(self, opportunity) -> bool:
+        if getattr(opportunity, "requested_states", None) and opportunity.state_match_status != "matched":
+            return False
         if self._has_review_blocker(opportunity) or self._has_past_end_time(opportunity):
             return False
         if opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
@@ -450,6 +557,8 @@ class HardwareHunterDailyScheduler:
         return False
 
     def _is_needs_review_opportunity(self, opportunity) -> bool:
+        if getattr(opportunity, "requested_states", None) and opportunity.state_match_status == "unknown":
+            return True
         if opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING:
             return True
         if self._is_history_opportunity(opportunity):

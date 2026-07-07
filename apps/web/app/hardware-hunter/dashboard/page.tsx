@@ -178,8 +178,10 @@ export default function HardwareDashboardPage() {
     [allKnownOpportunities, latestJobId, latestJob?.opportunities, resultScope, selectedStates, stateFilter],
   );
   const currentOpportunities = useMemo(() => getCurrentOpportunities(scopedOpportunities), [scopedOpportunities]);
-  const needsReviewOpportunities = useMemo(() => getNeedsReviewOpportunities(scopedOpportunities), [scopedOpportunities]);
-  const historyOpportunities = useMemo(() => getHistoryOpportunities(scopedOpportunities), [scopedOpportunities]);
+  const allNeedsReviewOpportunities = useMemo(() => getNeedsReviewOpportunities(allKnownOpportunities), [allKnownOpportunities]);
+  const allHistoryOpportunities = useMemo(() => getHistoryOpportunities(allKnownOpportunities), [allKnownOpportunities]);
+  const needsReviewOpportunities = allNeedsReviewOpportunities;
+  const historyOpportunities = allHistoryOpportunities;
   const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
@@ -205,16 +207,17 @@ export default function HardwareDashboardPage() {
   }, [activeJobId, job?.status]);
 
   const filteredOpportunities = useMemo(
-    () => filterOpportunities(scopedOpportunities, opportunityFilter, {
+    () => filterOpportunities(opportunityFilter === "needs_review" || opportunityFilter === "history" ? allKnownOpportunities : scopedOpportunities, opportunityFilter, {
       current: currentOpportunities,
       needsReview: needsReviewOpportunities,
       history: historyOpportunities,
     }),
-    [scopedOpportunities, currentOpportunities, historyOpportunities, needsReviewOpportunities, opportunityFilter],
+    [allKnownOpportunities, scopedOpportunities, currentOpportunities, historyOpportunities, needsReviewOpportunities, opportunityFilter],
   );
   const sortedOpportunities = useMemo(() => sortOpportunities(filteredOpportunities, sortBy), [filteredOpportunities, sortBy]);
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
   const scanProgress = useMemo(() => buildScanProgress(job), [job]);
+  const latestJobHealth = useMemo(() => buildLatestJobHealth(latestJob), [latestJob]);
   const coverageLabel = useMemo(
     () => regionStrategy === "all_us" ? t("coverageAllUs").replace("Coverage: ", "").replace("覆盖范围：", "") : selectedStates.join(", "),
     [regionStrategy, selectedStates, t],
@@ -616,7 +619,14 @@ export default function HardwareDashboardPage() {
           <div className="status-card-row">
             <div className="mini-status-card">
               <div className="section-label">{t("scheduler")}</div>
-              <strong>{scheduler?.status === "running" ? t("running") : t("paused")}</strong>
+              <strong>{scheduler?.enabled && scheduler?.status === "running" ? t("running") : t("paused")}</strong>
+              <span>{t("schedulerEnabled")}: {scheduler?.enabled ? t("yes") : t("no")}</span>
+              <span>{t("currentScanRunning")}: {scheduler?.is_job_running || scanProgress.isScanning ? t("yes") : t("idle")}</span>
+              {latestJobHealth.isStale || scheduler?.last_error ? (
+                <span className={latestJobHealth.isStale ? "danger-text" : "warning-text"}>
+                  {t("interruptedTask")}: {latestJobHealth.isStale ? t("yes") : scheduler?.last_error}
+                </span>
+              ) : null}
               <span>{t("last")}: {scheduler?.last_run_at ? new Date(scheduler.last_run_at).toLocaleString() : t("none")}</span>
               <span>{t("next")}: {scheduler?.next_run_at ? new Date(scheduler.next_run_at).toLocaleString() : t("paused")}</span>
               <div>
@@ -631,9 +641,21 @@ export default function HardwareDashboardPage() {
               <div className="section-label">{t("persistence")}</div>
               <strong>{dashboard?.persistence_mode ?? "memory_fallback"} · {databaseHealthLabel(dashboard)}</strong>
               <span>{t("databaseConfigured")}: {dashboard?.database_url_configured ? t("yes") : t("no")}</span>
-              <span>{t("stored")}: {dashboard?.stored_opportunities ?? 0} {t("opportunities")} / {dashboard?.stored_history_records ?? 0} {t("history")} / {dashboard?.stored_needs_review_records ?? 0} {t("review")}</span>
+              <span>{t("storedOpportunities")}: {dashboard?.stored_opportunities ?? 0}</span>
+              <span>{t("storedHistoryFlags")}: {dashboard?.stored_history_records ?? 0}</span>
+              <span>{t("storedReviewFlags")}: {dashboard?.stored_needs_review_records ?? 0}</span>
               <span>{t("lastWrite")}: {dashboard?.last_successful_database_write ? new Date(dashboard.last_successful_database_write).toLocaleString() : t("none")}</span>
               <span>{t("migration")}: {dashboard?.migration_version ?? t("unknown")}</span>
+            </div>
+            <div className="mini-status-card">
+              <div className="section-label">{t("latestJobHealth")}</div>
+              <strong>{latestJob?.status ?? t("none")}</strong>
+              <span>{t("scanJob")}: {latestJobId ?? t("none")}</span>
+              <span>
+                {t("sourceRuns")}: {latestJobHealth.total} · {t("completedRuns")}: {latestJobHealth.completed} · {t("searchingRuns")}: {latestJobHealth.searching} · {t("failedRuns")}: {latestJobHealth.failed}
+              </span>
+              <span>{t("opportunitiesFound")}: {latestJobHealth.opportunitiesFound}</span>
+              <span className={latestJobHealth.isStale ? "danger-text" : undefined}>{t("staleJob")}: {latestJobHealth.isStale ? t("yes") : t("no")}</span>
             </div>
             <div className="mini-status-card">
               <div className="section-label">{t("telegram")}</div>
@@ -1001,7 +1023,7 @@ function OpportunityTable({
               <td>{item.quantity ?? <span className="muted">{t("unknown")}</span>}</td>
               <td>{formatMoney(item.current_total_cost ?? item.total_price, t)}</td>
               <td>{formatMoney(item.cost_per_unit ?? item.unit_price, t)}</td>
-              <td>{[item.location_city, item.location_state].filter(Boolean).join(", ") || <span className="muted">{t("unknown")}</span>}</td>
+              <td>{[item.location_city, detectedState(item)].filter(Boolean).join(", ") || <span className="muted">{t("unknown")}</span>}</td>
               <td><span className="pill">{completenessLabel(item.component_completeness, t)}</span></td>
               <td><span className="pill">{statusLabel(item.listing_status, t)}</span></td>
               <td>{verificationBadge(item, t)}</td>
@@ -1059,7 +1081,7 @@ function NeedsReviewTable({
               </td>
               <td>{safeText(item.title, t)}</td>
               <td>{safeText(item.source, t)}</td>
-              <td>{safeText(item.location_state, t)}</td>
+              <td>{safeText(detectedState(item), t)}</td>
               <td>{safeText(item.category, t)}</td>
               <td>{reasonLabel(reviewReason(item), t)}</td>
               <td>{formatEndTime(item, t)}</td>
@@ -1104,12 +1126,16 @@ function SourceRunsTable({ sourceRuns, t }: { sourceRuns: HardwareSourceRun[]; t
             <th>{t("source")}</th>
             <th>{t("category")}</th>
             <th>{t("state")}</th>
+            <th>{t("detectedState")}</th>
+            <th>{t("stateMatch")}</th>
+            <th>{t("filterReason")}</th>
             <th>{t("queryTemplate")}</th>
             <th>{t("expandedQuery")}</th>
             <th>{t("scanDepth")}</th>
             <th>{t("status")}</th>
             <th>{t("resultCount")}</th>
             <th>{t("specificListingCount")}</th>
+            <th>{t("stateStats")}</th>
             <th>{t("zeroResult")}</th>
             <th>{t("duration")}</th>
             <th>{t("error")}</th>
@@ -1121,18 +1147,22 @@ function SourceRunsTable({ sourceRuns, t }: { sourceRuns: HardwareSourceRun[]; t
               <td>{run.source_name}</td>
               <td>{run.category ? categoryLabel(run.category, t) : "-"}</td>
               <td>{run.state_code ?? run.state_name ?? "-"}</td>
+              <td>{(run.detected_states ?? []).join(", ") || "-"}</td>
+              <td>{run.state_match_status ?? "-"}</td>
+              <td>{run.filter_reason ?? "-"}</td>
               <td className="muted truncate-query" title={run.query_template ?? ""}>{run.query_template ?? "-"}</td>
               <td className="muted truncate-query" title={run.expanded_query ?? run.query ?? ""}>{run.expanded_query ?? run.query ?? "-"}</td>
               <td>{run.scan_depth}</td>
               <td><span className="pill">{run.status}</span></td>
               <td>{run.result_count}</td>
               <td>{run.specific_listing_count ?? 0}</td>
+              <td>{run.matched_state_results ?? 0} / {run.state_mismatch_results ?? 0} / {run.location_unknown_results ?? 0}</td>
               <td>{run.result_count === 0 ? run.zero_result_reason ?? "unknown" : "-"}</td>
               <td>{sourceRunDuration(run)}</td>
               <td className="muted truncate-query" title={run.error_message ?? ""}>{run.error_message ?? "-"}</td>
             </tr>
           ))}
-          {!rows.length ? <tr><td colSpan={11} className="muted">{t("noRecords")}</td></tr> : null}
+          {!rows.length ? <tr><td colSpan={16} className="muted">{t("noRecords")}</td></tr> : null}
         </tbody>
       </table>
     </div>
@@ -1168,6 +1198,10 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
     ["Source Pages", stats?.source_pages ?? 0],
     ["News", stats?.news_or_articles ?? 0],
     ["Irrelevant", stats?.irrelevant ?? 0],
+    ["State Match", stats?.matched_state_results ?? 0],
+    ["State Mismatch", stats?.state_mismatch_results ?? 0],
+    ["Location Unknown", stats?.location_unknown_results ?? 0],
+    ["Filtered Out", stats?.filtered_out_results ?? 0],
     ["Duplicates", stats?.duplicates_removed ?? 0],
   ];
   return (
@@ -1539,10 +1573,10 @@ function getScopedOpportunities(
     scoped = getCurrentOpportunities(opportunities);
   } else if (scope === "selected_states" && stateFilter === "all") {
     const selected = new Set(selectedStateCodes.map(normalizeStateCode).filter(Boolean));
-    scoped = selected.size ? scoped.filter((item) => selected.has(normalizeStateCode(item.location_state))) : [];
+    scoped = selected.size ? scoped.filter((item) => selected.has(normalizeStateCode(detectedState(item)))) : [];
   }
   if (stateFilter !== "all") {
-    scoped = scoped.filter((item) => normalizeStateCode(item.location_state) === stateFilter);
+    scoped = scoped.filter((item) => normalizeStateCode(detectedState(item)) === stateFilter);
   }
   return scoped;
 }
@@ -1561,10 +1595,15 @@ function buildStateFilters(opportunities: HardwareOpportunity[], preferredStates
     if (normalized) states.add(normalized);
   });
   opportunities.forEach((item) => {
-    const normalized = normalizeStateCode(item.location_state);
+    const normalized = normalizeStateCode(detectedState(item));
     if (normalized) states.add(normalized);
   });
   return [...states].sort();
+}
+
+function detectedState(item: HardwareOpportunity) {
+  const rawDetected = typeof item.raw_data_json?.detected_state === "string" ? item.raw_data_json.detected_state : null;
+  return item.detected_state || rawDetected || item.location_state || null;
 }
 
 function normalizeStateCode(value?: string | null) {
@@ -1637,6 +1676,7 @@ function filterOpportunities(
 }
 
 function isCurrentOpportunity(item: HardwareOpportunity) {
+  if ((item.requested_states ?? []).length > 0 && item.state_match_status !== "matched") return false;
   if (hasReviewBlocker(item) || hasPastEndTime(item)) return false;
   if (item.listing_status === "active" || item.listing_status === "ending_soon") {
     return !hasUnconfirmedBlockedSource(item);
@@ -1648,6 +1688,7 @@ function isCurrentOpportunity(item: HardwareOpportunity) {
 }
 
 function isNeedsReviewOpportunity(item: HardwareOpportunity) {
+  if ((item.requested_states ?? []).length > 0 && item.state_match_status === "unknown") return true;
   if (item.end_time_verification === "conflicting") return true;
   if (isHistoryOpportunity(item)) return false;
   if (item.needs_manual_review || item.listing_status === "needs_manual_review") return true;
@@ -1742,6 +1783,23 @@ function buildReviewStats(needsReview: HardwareOpportunity[], history: HardwareO
     blocked: needsReview.filter((item) => reviewReason(item) === "blocked").length,
     unknownEndTime: needsReview.filter((item) => !confirmedEndTime(item)).length,
     ignored: history.filter((item) => item.listing_status === "ignored").length,
+  };
+}
+
+function buildLatestJobHealth(job: HardwareScanJob | null) {
+  const runs = job?.source_runs ?? [];
+  const searching = runs.filter((run) => run.status === "searching" || run.status === "pending").length;
+  const completed = runs.filter((run) => run.status !== "searching" && run.status !== "pending").length;
+  const failed = runs.filter((run) => run.status === "failed" || run.status === "timeout" || run.status === "blocked").length;
+  const updatedAtMs = job?.updated_at ? Date.parse(job.updated_at) : 0;
+  const staleAgeMs = updatedAtMs ? Date.now() - updatedAtMs : 0;
+  return {
+    total: runs.length,
+    completed,
+    searching,
+    failed,
+    opportunitiesFound: job?.opportunities?.length ?? 0,
+    isStale: Boolean(job && (job.status === "created" || job.status === "running") && searching > 0 && staleAgeMs > 10 * 60 * 1000),
   };
 }
 

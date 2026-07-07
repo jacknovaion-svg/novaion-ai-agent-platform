@@ -252,7 +252,15 @@ export interface HardwareSourceRun {
   category?: HardwareCategory | null;
   status: HardwareSourceRunStatus;
   result_count: number;
+  raw_results?: number;
   specific_listing_count: number;
+  matched_state_results?: number;
+  state_mismatch_results?: number;
+  location_unknown_results?: number;
+  filtered_out_results?: number;
+  detected_states?: string[];
+  state_match_status?: "matched" | "mismatched" | "unknown" | null;
+  filter_reason?: string | null;
   zero_result_reason?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
@@ -295,6 +303,11 @@ export interface HardwareOpportunity {
   location_city?: string | null;
   location_state?: string | null;
   zip_code?: string | null;
+  requested_states?: string[];
+  detected_state?: string | null;
+  matched_requested_state?: string | null;
+  state_match_status?: "matched" | "mismatched" | "unknown" | null;
+  filter_reason?: string | null;
   pickup_only?: boolean | null;
   shipping_available?: boolean | null;
   auction_end_time?: string | null;
@@ -415,6 +428,10 @@ export interface HardwareQualityStats {
   source_pages: number;
   news_or_articles: number;
   irrelevant: number;
+  matched_state_results?: number;
+  state_mismatch_results?: number;
+  location_unknown_results?: number;
+  filtered_out_results?: number;
   duplicates_removed: number;
   new_opportunities: number;
   changed_opportunities: number;
