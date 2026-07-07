@@ -23,11 +23,15 @@ class HardwareScanJobStatus(str, Enum):
 class HardwareSourceRunStatus(str, Enum):
     PENDING = "pending"
     SEARCHING = "searching"
+    RUNNING = "running"
     SUCCESS = "success"
+    ZERO_RESULTS = "zero_results"
     FAILED = "failed"
     TIMEOUT = "timeout"
     BLOCKED = "blocked"
+    SKIPPED_CACHE = "skipped_cache"
     DISABLED = "disabled"
+    PLANNED = "planned"
 
 
 class HardwareScanMode(str, Enum):
@@ -133,6 +137,20 @@ class HardwareScanDepth(str, Enum):
     DEEP = "deep"
 
 
+class HardwareScanLane(str, Enum):
+    FAST = "fast"
+    DEEP = "deep"
+
+
+class HardwareSourceHealthStatus(str, Enum):
+    HEALTHY = "healthy"
+    SLOW = "slow"
+    NOISY = "noisy"
+    LOW_YIELD = "low_yield"
+    UNSTABLE = "unstable"
+    DISABLED = "disabled"
+
+
 class HardwareZeroResultReason(str, Enum):
     QUERY_TOO_NARROW = "query_too_narrow"
     NO_INDEXED_RESULTS = "no_indexed_results"
@@ -159,6 +177,7 @@ class HardwareScanRequest(BaseModel):
     max_results_per_query: int = Field(default=4, ge=1, le=20)
     max_queries_per_category: int = Field(default=8, ge=1, le=40)
     scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
     send_telegram: bool = False
     manual_urls: list[HttpUrl] = Field(default_factory=list)
     manual_text: str | None = None
@@ -175,6 +194,7 @@ class HardwareGeneratedQuery(BaseModel):
     state_name: str | None = None
     location_phrase: str | None = None
     scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
     status: HardwareSourceRunStatus = HardwareSourceRunStatus.PENDING
     result_count: int = 0
     specific_listing_count: int = 0
@@ -192,6 +212,7 @@ class HardwareSourceRun(BaseModel):
     state_code: str | None = None
     state_name: str | None = None
     scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
     category: HardwareCategory | None = None
     status: HardwareSourceRunStatus = HardwareSourceRunStatus.PENDING
     result_count: int = 0
@@ -207,6 +228,13 @@ class HardwareSourceRun(BaseModel):
     zero_result_reason: HardwareZeroResultReason | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    duration_ms: int | None = None
+    timeout_seconds: int | None = None
+    retry_count: int = 0
+    cache_hit: bool = False
+    current_opportunities: int = 0
+    needs_review: int = 0
+    history: int = 0
     error_message: str | None = None
 
 
@@ -403,6 +431,69 @@ class HardwareQualityStats(BaseModel):
     failed_sources: int = 0
 
 
+class HardwareSourceHealth(BaseModel):
+    source_name: str
+    enabled: bool = True
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
+    total_runs: int = 0
+    success_runs: int = 0
+    zero_result_runs: int = 0
+    failed_runs: int = 0
+    timeout_runs: int = 0
+    raw_results: int = 0
+    matched_state_results: int = 0
+    state_mismatch_results: int = 0
+    location_unknown_results: int = 0
+    specific_listings: int = 0
+    current_opportunities: int = 0
+    needs_review: int = 0
+    history: int = 0
+    avg_duration_ms: float = 0
+    result_rate: float = 0
+    specific_listing_rate: float = 0
+    state_match_rate: float = 0
+    needs_review_rate: float = 0
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    health_status: HardwareSourceHealthStatus = HardwareSourceHealthStatus.LOW_YIELD
+
+
+class HardwareQueryPerformance(BaseModel):
+    query_key: str
+    source_name: str
+    category: HardwareCategory | None = None
+    state_code: str | None = None
+    query_template: str | None = None
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
+    total_runs: int = 0
+    consecutive_zero_results: int = 0
+    consecutive_failures: int = 0
+    raw_results: int = 0
+    specific_listings: int = 0
+    priority_status: str = "normal"
+    last_run_at: datetime | None = None
+
+
+class HardwareScanProgress(BaseModel):
+    job_id: UUID
+    status: HardwareScanJobStatus
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
+    overall_total: int = 0
+    overall_completed: int = 0
+    fast_total: int = 0
+    fast_completed: int = 0
+    deep_total: int = 0
+    deep_completed: int = 0
+    running_workers: int = 0
+    completed_workers: int = 0
+    timed_out_workers: int = 0
+    failed_workers: int = 0
+    cache_hits: int = 0
+    current_source: str | None = None
+    estimated_remaining_seconds: int | None = None
+    worker_runs: list[HardwareSourceRun] = Field(default_factory=list)
+
+
 class TelegramDeliveryStatus(str, Enum):
     DISABLED = "disabled"
     DRY_RUN = "dry_run"
@@ -508,6 +599,7 @@ class HardwareScanJob(BaseModel):
     status: HardwareScanJobStatus = HardwareScanJobStatus.CREATED
     categories: list[HardwareCategory] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
+    scan_lane: HardwareScanLane = HardwareScanLane.FAST
     generated_queries: list[HardwareGeneratedQuery] = Field(default_factory=list)
     source_runs: list[HardwareSourceRun] = Field(default_factory=list)
     opportunities: list[HardwareOpportunity] = Field(default_factory=list)
@@ -542,3 +634,4 @@ class HardwareDashboard(BaseModel):
     top_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
     history_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
     needs_review_opportunities: list[HardwareOpportunity] = Field(default_factory=list)
+    source_health: list[HardwareSourceHealth] = Field(default_factory=list)

@@ -15,8 +15,11 @@ from app.hardware_daily.models import (
     HardwareBulkReviewResult,
     HardwareOpportunity,
     HardwareScanJob,
+    HardwareScanProgress,
     HardwareScanRequest,
     HardwareSchedulerState,
+    HardwareSourceHealth,
+    HardwareQueryPerformance,
     TelegramReportRequest,
 )
 
@@ -42,6 +45,39 @@ def get_daily_scan_job(job_id: UUID) -> HardwareScanJob:
 @router.get("/daily-scan/dashboard", response_model=HardwareDashboard)
 def get_hardware_dashboard() -> HardwareDashboard:
     return hardware_daily_scheduler.dashboard()
+
+
+@router.get("/scan-progress/{job_id}", response_model=HardwareScanProgress)
+def get_hardware_scan_progress(job_id: UUID) -> HardwareScanProgress:
+    progress = hardware_daily_scheduler.scan_progress(job_id)
+    if not progress:
+        raise HTTPException(status_code=404, detail="Hardware scan job not found")
+    return progress
+
+
+@router.get("/source-health", response_model=list[HardwareSourceHealth])
+def get_hardware_source_health() -> list[HardwareSourceHealth]:
+    return hardware_daily_scheduler.source_health()
+
+
+@router.get("/query-performance", response_model=list[HardwareQueryPerformance])
+def get_hardware_query_performance() -> list[HardwareQueryPerformance]:
+    return hardware_daily_scheduler.query_performance()
+
+
+@router.post("/cache/clear")
+def clear_hardware_query_cache() -> dict:
+    return hardware_daily_scheduler.clear_query_cache()
+
+
+@router.post("/source/{source_name}/disable")
+def disable_hardware_source(source_name: str) -> dict:
+    return hardware_daily_scheduler.set_source_enabled(source_name, enabled=False)
+
+
+@router.post("/source/{source_name}/enable")
+def enable_hardware_source(source_name: str) -> dict:
+    return hardware_daily_scheduler.set_source_enabled(source_name, enabled=True)
 
 
 @router.post("/daily-scan/opportunities/{opportunity_id}/recheck", response_model=HardwareOpportunity)

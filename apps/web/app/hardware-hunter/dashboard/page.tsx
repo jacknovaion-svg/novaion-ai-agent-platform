@@ -16,6 +16,7 @@ import {
   createHardwareTelegramReport,
   getHardwareDailyScanJob,
   getHardwareDashboard,
+  getHardwareScanProgress,
   recheckHardwareOpportunities,
   recheckHardwareOpportunity,
   runHardwareDailyScan,
@@ -28,6 +29,7 @@ import type {
   HardwareDashboard,
   HardwareOpportunity,
   HardwareScanJob,
+  HardwareScanProgress,
   HardwareSourceRun,
 } from "@novaion/shared/types";
 
@@ -39,6 +41,7 @@ type OpportunityFilter = "current" | "active" | "ending_soon" | "needs_review" |
 type ResultScope = "current_scan" | "all_current" | "selected_states";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
 type ScanDepth = "quick" | "standard" | "deep";
+type ScanLane = "fast" | "deep";
 type ScanPreset =
   | "full_hardware_scan"
   | "servers_only"
@@ -142,6 +145,8 @@ export default function HardwareDashboardPage() {
   const [scanPreset, setScanPreset] = useState<ScanPreset>("servers_only");
   const [scanMode, setScanMode] = useState<DashboardScanMode>("asset_listing_search");
   const [scanDepth, setScanDepth] = useState<ScanDepth>("standard");
+  const [scanLane, setScanLane] = useState<ScanLane>("fast");
+  const [progress, setProgress] = useState<HardwareScanProgress | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
@@ -182,7 +187,7 @@ export default function HardwareDashboardPage() {
   const allHistoryOpportunities = useMemo(() => getHistoryOpportunities(allKnownOpportunities), [allKnownOpportunities]);
   const needsReviewOpportunities = allNeedsReviewOpportunities;
   const historyOpportunities = allHistoryOpportunities;
-  const sourceRuns = job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
+  const sourceRuns = progress?.worker_runs ?? job?.source_runs ?? dashboard?.latest_job?.source_runs ?? [];
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
   const scheduler = dashboard?.scheduler;
@@ -194,9 +199,16 @@ export default function HardwareDashboardPage() {
   useEffect(() => {
     if (!activeJobId || ["completed", "partially_completed", "failed"].includes(job?.status ?? "")) return;
     const timer = window.setInterval(async () => {
+      try {
+        const latestProgress = await getHardwareScanProgress(activeJobId);
+        setProgress(latestProgress);
+      } catch {
+        // Progress is best-effort; job polling below remains the source of truth.
+      }
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob(latest);
       if (["completed", "partially_completed", "failed"].includes(latest.status)) {
+        setProgress(null);
         setResultScope("current_scan");
         if (latest.states.length === 1) setStateFilter(latest.states[0]);
         window.clearInterval(timer);
@@ -216,16 +228,17 @@ export default function HardwareDashboardPage() {
   );
   const sortedOpportunities = useMemo(() => sortOpportunities(filteredOpportunities, sortBy), [filteredOpportunities, sortBy]);
   const sourceSummary = useMemo(() => summarizeSources(sourceRuns), [sourceRuns]);
-  const scanProgress = useMemo(() => buildScanProgress(job), [job]);
+  const scanProgress = useMemo(() => buildScanProgress(job, progress), [job, progress]);
   const latestJobHealth = useMemo(() => buildLatestJobHealth(latestJob), [latestJob]);
   const coverageLabel = useMemo(
     () => regionStrategy === "all_us" ? t("coverageAllUs").replace("Coverage: ", "").replace("覆盖范围：", "") : selectedStates.join(", "),
     [regionStrategy, selectedStates, t],
   );
   const estimatedTasks = useMemo(
-    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth),
-    [regionStrategy, selectedStates.length, selectedCategories.length, scanDepth],
+    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane),
+    [regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane],
   );
+  const activeSourceCount = scanLane === "fast" ? sourceCount : 0;
   const runButtonLabel = useMemo(() => {
     if (busy || scanProgress.isScanning) return t("scanning");
     if (job?.status === "completed" || job?.status === "partially_completed") return t("completed");
@@ -268,9 +281,11 @@ export default function HardwareDashboardPage() {
         max_results_per_query: 3,
         max_queries_per_category: scanDepthQueryCounts[scanDepth],
         scan_depth: scanDepth,
+        scan_lane: scanLane,
         send_telegram: false,
       });
       setJob(created);
+      setProgress(null);
       setResultScope("current_scan");
       const requestedStates = regionStrategy === "all_us" ? [] : selectedStates;
       setStateFilter(requestedStates.length === 1 ? requestedStates[0] : "all");
@@ -585,6 +600,17 @@ export default function HardwareDashboardPage() {
               <option value="deep">{t("deep")}</option>
             </select>
           </label>
+
+          <label className="field compact-field">
+            <span>Scan Lane</span>
+            <select className="select" value={scanLane} onChange={(event) => setScanLane(event.target.value as ScanLane)}>
+              <option value="fast">Fast Scan</option>
+              <option value="deep">Deep Scan planned</option>
+            </select>
+            <small className="strategy-help">
+              {scanLane === "fast" ? "Runs GovDeals, Public Surplus, and Municibid now." : "Shows planned deep sources without fabricating results."}
+            </small>
+          </label>
         </div>
 
         <div className="scan-action-row">
@@ -601,16 +627,17 @@ export default function HardwareDashboardPage() {
               {t("recheckListings")}
             </button>
             <div className="scan-summary">
-              {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {sourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
+              {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {activeSourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
             </div>
             <div className="scan-summary">
-              {t("queryPreview")}: {sourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × {regionStrategy === "all_us" ? 1 : Math.max(selectedStates.length, 1)} {t("states")} × {scanDepthQueryCounts[scanDepth]} queries = {estimatedTasks} {t("tasks")}
+              {t("queryPreview")}: {activeSourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × {regionStrategy === "all_us" ? 1 : Math.max(selectedStates.length, 1)} {t("states")} × {scanDepthQueryCounts[scanDepth]} queries = {estimatedTasks} {t("tasks")}
               {estimatedTasks >= 100 ? ` · ${t("largeScanWarning")}` : ""}
             </div>
             {scanProgress.isScanning ? (
               <div className="scan-progress">
                 <span>{scanProgress.completed}/{scanProgress.total} {t("tasks")}</span>
                 <span>{scanProgress.currentCategory} · {scanProgress.currentSource}</span>
+                <span>Workers {scanProgress.runningWorkers} running · {scanProgress.cacheHits} cache hits</span>
                 <span>{scanProgress.elapsed}</span>
               </div>
             ) : null}
@@ -779,12 +806,13 @@ export default function HardwareDashboardPage() {
                 {showSources ? t("collapseSourceRuns") : t("viewSourceRuns")}
               </button>
             </div>
-            {showSources ? (
-              <>
-                <SourceQualitySummary sourceRuns={sourceRuns} t={t} />
-                <SourceRunsTable sourceRuns={sourceRuns} t={t} />
-              </>
-            ) : null}
+          {showSources ? (
+            <>
+              <SourceQualitySummary sourceRuns={sourceRuns} t={t} />
+              <SourceHealthTable sourceHealth={dashboard?.source_health ?? []} />
+              <SourceRunsTable sourceRuns={sourceRuns} t={t} />
+            </>
+          ) : null}
           </section>
 
           <section className="panel compact-panel">
@@ -884,6 +912,7 @@ export default function HardwareDashboardPage() {
           {showSources ? (
             <>
               <SourceQualitySummary sourceRuns={sourceRuns} t={t} />
+              <SourceHealthTable sourceHealth={dashboard?.source_health ?? []} />
               <SourceRunsTable sourceRuns={sourceRuns} t={t} />
             </>
           ) : <p className="muted">{t("sourceRunsCollapsed")}</p>}
@@ -1181,6 +1210,56 @@ function SourceQualitySummary({ sourceRuns, t }: { sourceRuns: HardwareSourceRun
           <small>{item.rawResults} raw · {item.specificListings} specific · {Math.round(item.resultRate * 100)}% result · {Math.round(item.specificListingRate * 100)}% specific</small>
         </span>
       ))}
+    </div>
+  );
+}
+
+function SourceHealthTable({ sourceHealth }: { sourceHealth: NonNullable<HardwareDashboard["source_health"]> }) {
+  if (!sourceHealth.length) return <p className="muted">Source Quality Report will appear after the next scan.</p>;
+  return (
+    <div className="table-wrap compact-table-wrap">
+      <table className="compact-table source-table">
+        <thead>
+          <tr>
+            <th>Source</th>
+            <th>Runs</th>
+            <th>Success</th>
+            <th>Zero</th>
+            <th>Timeout</th>
+            <th>Failed</th>
+            <th>Raw</th>
+            <th>State Match</th>
+            <th>Mismatch</th>
+            <th>Unknown Location</th>
+            <th>Specific</th>
+            <th>Current</th>
+            <th>Needs Review</th>
+            <th>Avg Duration</th>
+            <th>Health</th>
+          </tr>
+        </thead>
+        <tbody>
+          {sourceHealth.map((item) => (
+            <tr key={item.source_name}>
+              <td>{item.source_name}</td>
+              <td>{item.total_runs}</td>
+              <td>{item.success_runs}</td>
+              <td>{item.zero_result_runs}</td>
+              <td>{item.timeout_runs}</td>
+              <td>{item.failed_runs}</td>
+              <td>{item.raw_results}</td>
+              <td>{item.matched_state_results}</td>
+              <td>{item.state_mismatch_results}</td>
+              <td>{item.location_unknown_results}</td>
+              <td>{item.specific_listings}</td>
+              <td>{item.current_opportunities}</td>
+              <td>{item.needs_review}</td>
+              <td>{formatMs(item.avg_duration_ms)}</td>
+              <td><span className="pill">{item.health_status}</span></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -1765,6 +1844,11 @@ function sourceRunDuration(run: HardwareSourceRun) {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function formatMs(ms?: number | null) {
+  if (!ms || !Number.isFinite(ms)) return "-";
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function tabLabel(tab: Tab, t: (key: string) => string) {
   if (tab === "needs review") return t("needsReview");
   if (tab === "source runs") return t("sourceRuns");
@@ -1897,22 +1981,39 @@ function normalizeState(input: string) {
   return stateLookup.get(key) ?? null;
 }
 
-function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth) {
+function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth, scanLane: ScanLane) {
+  if (scanLane === "deep") return 0;
   const regionFactor = strategy === "all_us" ? 1 : Math.max(stateCount, 1);
   return regionFactor * categoryCount * sourceCount * scanDepthQueryCounts[scanDepth];
 }
 
-function buildScanProgress(job: HardwareScanJob | null) {
+function buildScanProgress(job: HardwareScanJob | null, progress: HardwareScanProgress | null) {
   const isScanning = job?.status === "created" || job?.status === "running";
+  if (progress) {
+    const activeRun = progress.worker_runs.find((run) => run.status === "running" || run.status === "searching" || run.status === "pending");
+    const elapsedSeconds = job ? Math.max(0, Math.round((Date.now() - Date.parse(job.created_at)) / 1000)) : 0;
+    return {
+      isScanning,
+      total: Math.max(progress.overall_total, 1),
+      completed: progress.overall_completed,
+      runningWorkers: progress.running_workers,
+      cacheHits: progress.cache_hits,
+      currentCategory: activeRun?.category ?? "waiting",
+      currentSource: progress.current_source ?? activeRun?.source_name ?? "queued",
+      elapsed: `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`,
+    };
+  }
   const total = Math.max(job?.generated_queries?.length ?? 0, job?.source_runs?.length ?? 0, 1);
-  const completed = job?.source_runs?.filter((run) => run.status !== "searching" && run.status !== "pending").length ?? 0;
-  const activeRun = job?.source_runs?.find((run) => run.status === "searching");
+  const completed = job?.source_runs?.filter((run) => !["searching", "pending", "running"].includes(run.status)).length ?? 0;
+  const activeRun = job?.source_runs?.find((run) => run.status === "searching" || run.status === "running");
   const lastRun = job?.source_runs?.[job.source_runs.length - 1];
   const elapsedSeconds = job ? Math.max(0, Math.round((Date.now() - Date.parse(job.created_at)) / 1000)) : 0;
   return {
     isScanning,
     total,
     completed: Math.min(completed, total),
+    runningWorkers: job?.source_runs?.filter((run) => run.status === "running" || run.status === "searching").length ?? 0,
+    cacheHits: job?.source_runs?.filter((run) => run.cache_hit || run.status === "skipped_cache").length ?? 0,
     currentCategory: activeRun?.category ?? lastRun?.category ?? "waiting",
     currentSource: activeRun?.source_name ?? lastRun?.source_name ?? "queued",
     elapsed: `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`,

@@ -103,15 +103,16 @@ class HardwareDailyPersistence:
                     text(
                         """
                         insert into hardware_scan_jobs
-                          (id, mode, status, categories, states, generated_queries, quality_stats, report, error_message, created_at, updated_at, completed_at)
+                          (id, mode, status, categories, states, scan_lane, generated_queries, quality_stats, report, error_message, created_at, updated_at, completed_at)
                         values
-                          (:id, :mode, :status, cast(:categories as jsonb), cast(:states as jsonb), cast(:generated_queries as jsonb),
+                          (:id, :mode, :status, cast(:categories as jsonb), cast(:states as jsonb), :scan_lane, cast(:generated_queries as jsonb),
                            cast(:quality_stats as jsonb), cast(:report as jsonb), :error_message, :created_at, :updated_at, :completed_at)
                         on conflict (id) do update set
                           mode = excluded.mode,
                           status = excluded.status,
                           categories = excluded.categories,
                           states = excluded.states,
+                          scan_lane = excluded.scan_lane,
                           generated_queries = excluded.generated_queries,
                           quality_stats = excluded.quality_stats,
                           report = excluded.report,
@@ -126,6 +127,7 @@ class HardwareDailyPersistence:
                         "status": job.status.value,
                         "categories": json.dumps([category.value for category in job.categories]),
                         "states": json.dumps(job.states),
+                        "scan_lane": job.scan_lane.value,
                         "generated_queries": json.dumps(payload["generated_queries"]),
                         "quality_stats": json.dumps(payload["quality_stats"]),
                         "report": json.dumps(payload.get("report")),
@@ -346,6 +348,83 @@ class HardwareDailyPersistence:
             self._mark_write_error(exc)
             return False
 
+    def get_query_cache(self, cache_key: str) -> dict | None:
+        if not self.engine:
+            return None
+        try:
+            with self.engine.connect() as connection:
+                row = connection.execute(
+                    text(
+                        """
+                        select raw_results, cached_at, expires_at, source_name, category, state_code,
+                               query_normalized, scan_depth, scan_lane
+                        from hardware_query_cache
+                        where cache_key = :cache_key
+                          and expires_at > now()
+                        """
+                    ),
+                    {"cache_key": cache_key},
+                ).mappings().first()
+                if not row:
+                    return None
+                payload = dict(row)
+                payload["raw_results"] = self._json_value(payload.get("raw_results"), [])
+                return payload
+        except Exception as exc:
+            self._mark_write_error(exc)
+            return None
+
+    def upsert_query_cache(self, cache_key: str, payload: dict) -> None:
+        if not self.engine:
+            return
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    text(
+                        """
+                        insert into hardware_query_cache
+                          (cache_key, source_name, category, state_code, query_normalized, scan_depth,
+                           scan_lane, raw_results, result_count, cached_at, expires_at)
+                        values
+                          (:cache_key, :source_name, :category, :state_code, :query_normalized, :scan_depth,
+                           :scan_lane, cast(:raw_results as jsonb), :result_count, :cached_at, :expires_at)
+                        on conflict (cache_key) do update set
+                          raw_results = excluded.raw_results,
+                          result_count = excluded.result_count,
+                          cached_at = excluded.cached_at,
+                          expires_at = excluded.expires_at,
+                          hit_count = hardware_query_cache.hit_count + 1,
+                          last_hit_at = now()
+                        """
+                    ),
+                    {
+                        "cache_key": cache_key,
+                        "source_name": payload.get("source_name"),
+                        "category": payload.get("category"),
+                        "state_code": payload.get("state_code"),
+                        "query_normalized": payload.get("query_normalized"),
+                        "scan_depth": payload.get("scan_depth"),
+                        "scan_lane": payload.get("scan_lane"),
+                        "raw_results": json.dumps(payload.get("raw_results") or []),
+                        "result_count": int(payload.get("result_count") or 0),
+                        "cached_at": payload.get("cached_at") or utc_now(),
+                        "expires_at": payload.get("expires_at"),
+                    },
+                )
+            self._mark_write_success()
+        except Exception as exc:
+            self._mark_write_error(exc)
+
+    def clear_query_cache(self) -> None:
+        if not self.engine:
+            return
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(text("delete from hardware_query_cache"))
+            self._mark_write_success()
+        except Exception as exc:
+            self._mark_write_error(exc)
+
     def refresh_counts(self) -> None:
         if not self.engine:
             return
@@ -448,6 +527,9 @@ class HardwareDailyPersistence:
                   add column if not exists last_seen_job_id uuid,
                   add column if not exists last_updated_job_id uuid;
 
+                alter table hardware_scan_jobs
+                  add column if not exists scan_lane text not null default 'fast';
+
                 update hardware_opportunities
                 set
                   first_seen_job_id = coalesce(first_seen_job_id, scan_job_id),
@@ -471,8 +553,24 @@ class HardwareDailyPersistence:
                   add column if not exists state_code text,
                   add column if not exists state_name text,
                   add column if not exists scan_depth text not null default 'standard',
+                  add column if not exists scan_lane text not null default 'fast',
                   add column if not exists specific_listing_count integer not null default 0,
-                  add column if not exists zero_result_reason text;
+                  add column if not exists zero_result_reason text,
+                  add column if not exists raw_results integer not null default 0,
+                  add column if not exists matched_state_results integer not null default 0,
+                  add column if not exists state_mismatch_results integer not null default 0,
+                  add column if not exists location_unknown_results integer not null default 0,
+                  add column if not exists filtered_out_results integer not null default 0,
+                  add column if not exists detected_states jsonb not null default '[]'::jsonb,
+                  add column if not exists state_match_status text,
+                  add column if not exists filter_reason text,
+                  add column if not exists duration_ms integer,
+                  add column if not exists timeout_seconds integer,
+                  add column if not exists retry_count integer not null default 0,
+                  add column if not exists cache_hit boolean not null default false,
+                  add column if not exists current_opportunities integer not null default 0,
+                  add column if not exists needs_review integer not null default 0,
+                  add column if not exists history integer not null default 0;
                 """
             )
 
@@ -482,18 +580,38 @@ class HardwareDailyPersistence:
                 """
                 insert into hardware_source_runs
                   (id, scan_job_id, source_name, adapter_type, query, expanded_query, query_template_id, query_template, state_code,
-                   state_name, scan_depth, category, status, result_count, specific_listing_count, zero_result_reason,
-                   started_at, completed_at, error_message)
+                   state_name, scan_depth, scan_lane, category, status, result_count, raw_results, specific_listing_count,
+                   matched_state_results, state_mismatch_results, location_unknown_results, filtered_out_results, detected_states,
+                   state_match_status, filter_reason, zero_result_reason, duration_ms, timeout_seconds, retry_count, cache_hit,
+                   current_opportunities, needs_review, history, started_at, completed_at, error_message)
                 values
                   (:id, :scan_job_id, :source_name, :adapter_type, :query, :expanded_query, :query_template_id, :query_template,
-                   :state_code, :state_name, :scan_depth, :category, :status, :result_count, :specific_listing_count,
-                   :zero_result_reason, :started_at, :completed_at, :error_message)
+                   :state_code, :state_name, :scan_depth, :scan_lane, :category, :status, :result_count, :raw_results,
+                   :specific_listing_count, :matched_state_results, :state_mismatch_results, :location_unknown_results,
+                   :filtered_out_results, cast(:detected_states as jsonb), :state_match_status, :filter_reason, :zero_result_reason,
+                   :duration_ms, :timeout_seconds, :retry_count, :cache_hit, :current_opportunities, :needs_review, :history,
+                   :started_at, :completed_at, :error_message)
                 on conflict (id) do update set
                   scan_job_id = excluded.scan_job_id,
                   status = excluded.status,
                   result_count = excluded.result_count,
+                  raw_results = excluded.raw_results,
                   specific_listing_count = excluded.specific_listing_count,
+                  matched_state_results = excluded.matched_state_results,
+                  state_mismatch_results = excluded.state_mismatch_results,
+                  location_unknown_results = excluded.location_unknown_results,
+                  filtered_out_results = excluded.filtered_out_results,
+                  detected_states = excluded.detected_states,
+                  state_match_status = excluded.state_match_status,
+                  filter_reason = excluded.filter_reason,
                   zero_result_reason = excluded.zero_result_reason,
+                  duration_ms = excluded.duration_ms,
+                  timeout_seconds = excluded.timeout_seconds,
+                  retry_count = excluded.retry_count,
+                  cache_hit = excluded.cache_hit,
+                  current_opportunities = excluded.current_opportunities,
+                  needs_review = excluded.needs_review,
+                  history = excluded.history,
                   completed_at = excluded.completed_at,
                   error_message = excluded.error_message
                 """
@@ -510,14 +628,83 @@ class HardwareDailyPersistence:
                 "state_code": run.state_code,
                 "state_name": run.state_name,
                 "scan_depth": run.scan_depth.value,
+                "scan_lane": run.scan_lane.value,
                 "category": run.category.value if run.category else None,
                 "status": run.status.value,
                 "result_count": run.result_count,
+                "raw_results": run.raw_results,
                 "specific_listing_count": run.specific_listing_count,
+                "matched_state_results": run.matched_state_results,
+                "state_mismatch_results": run.state_mismatch_results,
+                "location_unknown_results": run.location_unknown_results,
+                "filtered_out_results": run.filtered_out_results,
+                "detected_states": json.dumps(run.detected_states),
+                "state_match_status": run.state_match_status,
+                "filter_reason": run.filter_reason,
                 "zero_result_reason": run.zero_result_reason.value if run.zero_result_reason else None,
+                "duration_ms": run.duration_ms,
+                "timeout_seconds": run.timeout_seconds,
+                "retry_count": run.retry_count,
+                "cache_hit": run.cache_hit,
+                "current_opportunities": run.current_opportunities,
+                "needs_review": run.needs_review,
+                "history": run.history,
                 "started_at": run.started_at,
                 "completed_at": run.completed_at,
                 "error_message": run.error_message,
+            },
+        )
+        connection.execute(
+            text(
+                """
+                insert into hardware_worker_runs
+                  (id, scan_job_id, source_name, category, state_code, query, scan_lane, started_at, finished_at,
+                   duration_ms, status, raw_results, matched_state_results, state_mismatch_results, location_unknown_results,
+                   specific_listings, current_opportunities, needs_review, history, error_message, timeout_seconds, retry_count, cache_hit)
+                values
+                  (:id, :scan_job_id, :source_name, :category, :state_code, :query, :scan_lane, :started_at, :finished_at,
+                   :duration_ms, :status, :raw_results, :matched_state_results, :state_mismatch_results, :location_unknown_results,
+                   :specific_listings, :current_opportunities, :needs_review, :history, :error_message, :timeout_seconds, :retry_count, :cache_hit)
+                on conflict (id) do update set
+                  finished_at = excluded.finished_at,
+                  duration_ms = excluded.duration_ms,
+                  status = excluded.status,
+                  raw_results = excluded.raw_results,
+                  matched_state_results = excluded.matched_state_results,
+                  state_mismatch_results = excluded.state_mismatch_results,
+                  location_unknown_results = excluded.location_unknown_results,
+                  specific_listings = excluded.specific_listings,
+                  current_opportunities = excluded.current_opportunities,
+                  needs_review = excluded.needs_review,
+                  history = excluded.history,
+                  error_message = excluded.error_message,
+                  cache_hit = excluded.cache_hit
+                """
+            ),
+            {
+                "id": str(run.id),
+                "scan_job_id": str(job_id),
+                "source_name": run.source_name,
+                "category": run.category.value if run.category else None,
+                "state_code": run.state_code,
+                "query": run.query,
+                "scan_lane": run.scan_lane.value,
+                "started_at": run.started_at,
+                "finished_at": run.completed_at,
+                "duration_ms": run.duration_ms,
+                "status": run.status.value,
+                "raw_results": run.raw_results,
+                "matched_state_results": run.matched_state_results,
+                "state_mismatch_results": run.state_mismatch_results,
+                "location_unknown_results": run.location_unknown_results,
+                "specific_listings": run.specific_listing_count,
+                "current_opportunities": run.current_opportunities,
+                "needs_review": run.needs_review,
+                "history": run.history,
+                "error_message": run.error_message,
+                "timeout_seconds": run.timeout_seconds,
+                "retry_count": run.retry_count,
+                "cache_hit": run.cache_hit,
             },
         )
 
@@ -775,6 +962,7 @@ class HardwareDailyPersistence:
             "status": row["status"],
             "categories": self._json_value(row.get("categories"), []),
             "states": self._json_value(row.get("states"), []),
+            "scan_lane": row.get("scan_lane") or "fast",
             "generated_queries": self._json_value(row.get("generated_queries"), []),
             "source_runs": [],
             "opportunities": [],

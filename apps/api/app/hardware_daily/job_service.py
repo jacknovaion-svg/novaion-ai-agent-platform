@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import threading
 from datetime import timedelta, timezone
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -13,16 +16,21 @@ from app.hardware_daily.models import (
     HardwareQualityStats,
     HardwareResultPageType,
     HardwareSchedulerState,
+    HardwareScanProgress,
     AuctionEndVerificationLevel,
     ListingStatus,
     SchedulerStatus,
     HardwareScanJob,
     HardwareScanJobStatus,
     HardwareScanDepth,
+    HardwareScanLane,
     HardwareScanMode,
     HardwareScanRequest,
     HardwareSourceRun,
+    HardwareSourceHealth,
+    HardwareSourceHealthStatus,
     HardwareSourceRunStatus,
+    HardwareQueryPerformance,
     HardwareZeroResultReason,
     RawHardwareListing,
     utc_now,
@@ -49,8 +57,9 @@ class HardwareHunterDailyScheduler:
         self.scheduler_state = hardware_daily_store.scheduler_state
         self._active_tasks: set[UUID] = set()
         self._queued_tasks: set[UUID] = set()
+        self._disabled_sources: set[str] = set()
         self._loop_task: asyncio.Task | None = None
-        self._store_write_lock = asyncio.Lock()
+        self._store_write_lock = threading.RLock()
         self._recover_interrupted_job()
         self._recover_stale_running_jobs()
         self._recover_orphaned_source_runs()
@@ -106,7 +115,7 @@ class HardwareHunterDailyScheduler:
         finished_at = now or utc_now()
         changed = False
         for run in job.source_runs:
-            if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING}:
+            if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING, HardwareSourceRunStatus.RUNNING}:
                 run.status = HardwareSourceRunStatus.FAILED
                 run.completed_at = finished_at
                 run.error_message = "Parent scan job was interrupted before completion."
@@ -124,7 +133,7 @@ class HardwareHunterDailyScheduler:
             if running_job:
                 return running_job
         categories = request.categories or list(HardwareCategory)
-        job = HardwareScanJob(mode=request.mode, categories=categories, states=request.states)
+        job = HardwareScanJob(mode=request.mode, categories=categories, states=request.states, scan_lane=request.scan_lane)
         hardware_daily_store.create_job(job)
         self._queued_tasks.add(job.id)
         self.scheduler_state.is_job_running = True
@@ -152,7 +161,16 @@ class HardwareHunterDailyScheduler:
                 states=job.states,
                 max_queries_per_category=request.max_queries_per_category,
                 scan_depth=request.scan_depth,
+                scan_lane=request.scan_lane,
             )
+            if request.scan_lane == HardwareScanLane.FAST:
+                job.generated_queries.extend(
+                    self.query_builder.planned_deep_queries(
+                        categories=job.categories,
+                        states=job.states,
+                        scan_depth=request.scan_depth,
+                    )
+                )
             await self._update_job_async(job)
 
             raw_results: list[RawHardwareListing] = []
@@ -189,6 +207,7 @@ class HardwareHunterDailyScheduler:
                 remembered.append(saved)
 
             scored = self.scoring.score(remembered)
+            self._apply_source_run_opportunity_counts(job, scored)
             stats.active_opportunities = len([item for item in scored if item.listing_status == ListingStatus.ACTIVE])
             stats.ending_soon = len([item for item in scored if item.listing_status == ListingStatus.ENDING_SOON])
             stats.expired_removed = len([item for item in scored if self._is_history_opportunity(item)])
@@ -221,23 +240,211 @@ class HardwareHunterDailyScheduler:
             self._active_tasks.discard(job_id)
 
     async def _update_job_async(self, job: HardwareScanJob) -> None:
-        async with self._store_write_lock:
-            await asyncio.to_thread(hardware_daily_store.update_job, job)
+        await asyncio.to_thread(self._update_job_sync, job)
 
     async def _save_scan_job_async(self, job: HardwareScanJob) -> None:
-        async with self._store_write_lock:
-            await asyncio.to_thread(hardware_daily_persistence.save_scan_job, job)
+        await asyncio.to_thread(self._save_scan_job_sync, job)
 
     async def _save_scheduler_state_async(self) -> None:
-        async with self._store_write_lock:
-            await asyncio.to_thread(hardware_daily_store.save_scheduler_state, self.scheduler_state)
+        await asyncio.to_thread(self._save_scheduler_state_sync)
 
     async def _remember_opportunity_async(self, key: str, opportunity, job_id: UUID):
-        async with self._store_write_lock:
-            return await asyncio.to_thread(hardware_daily_store.remember_opportunity, key, opportunity, job_id=job_id)
+        return await asyncio.to_thread(self._remember_opportunity_sync, key, opportunity, job_id)
+
+    async def _get_query_cache_async(self, cache_key: str, ttl_minutes: int):
+        return await asyncio.to_thread(self._get_query_cache_sync, cache_key, ttl_minutes)
+
+    async def _set_query_cache_async(self, cache_key: str, payload: dict) -> None:
+        await asyncio.to_thread(self._set_query_cache_sync, cache_key, payload)
+
+    def _update_job_sync(self, job: HardwareScanJob) -> None:
+        with self._store_write_lock:
+            hardware_daily_store.update_job(job)
+
+    def _save_scan_job_sync(self, job: HardwareScanJob) -> None:
+        with self._store_write_lock:
+            hardware_daily_persistence.save_scan_job(job)
+
+    def _save_scheduler_state_sync(self) -> None:
+        with self._store_write_lock:
+            hardware_daily_store.save_scheduler_state(self.scheduler_state)
+
+    def _remember_opportunity_sync(self, key: str, opportunity, job_id: UUID):
+        with self._store_write_lock:
+            return hardware_daily_store.remember_opportunity(key, opportunity, job_id=job_id)
+
+    def _get_query_cache_sync(self, cache_key: str, ttl_minutes: int):
+        with self._store_write_lock:
+            return hardware_daily_store.get_cached_query(cache_key, ttl_minutes)
+
+    def _set_query_cache_sync(self, cache_key: str, payload: dict) -> None:
+        with self._store_write_lock:
+            hardware_daily_store.set_cached_query(cache_key, payload)
 
     def get_job(self, job_id: UUID) -> HardwareScanJob | None:
         return hardware_daily_store.get_job(job_id)
+
+    def scan_progress(self, job_id: UUID) -> HardwareScanProgress | None:
+        job = hardware_daily_store.get_job(job_id)
+        if not job:
+            return None
+        runs = job.source_runs
+        executable_runs = [run for run in runs if run.status != HardwareSourceRunStatus.PLANNED]
+        fast_runs = [run for run in runs if run.scan_lane == HardwareScanLane.FAST and run.status != HardwareSourceRunStatus.PLANNED]
+        deep_runs = [run for run in runs if run.scan_lane == HardwareScanLane.DEEP and run.status != HardwareSourceRunStatus.PLANNED]
+        completed_statuses = {
+            HardwareSourceRunStatus.SUCCESS,
+            HardwareSourceRunStatus.ZERO_RESULTS,
+            HardwareSourceRunStatus.FAILED,
+            HardwareSourceRunStatus.TIMEOUT,
+            HardwareSourceRunStatus.BLOCKED,
+            HardwareSourceRunStatus.SKIPPED_CACHE,
+            HardwareSourceRunStatus.DISABLED,
+        }
+        running = [run for run in executable_runs if run.status in {HardwareSourceRunStatus.SEARCHING, HardwareSourceRunStatus.RUNNING, HardwareSourceRunStatus.PENDING}]
+        durations = [run.duration_ms for run in executable_runs if run.duration_ms]
+        avg_duration = int(sum(durations) / len(durations)) if durations else None
+        remaining = max(0, len(executable_runs) - len([run for run in executable_runs if run.status in completed_statuses]))
+        return HardwareScanProgress(
+            job_id=job.id,
+            status=job.status,
+            scan_lane=job.scan_lane,
+            overall_total=len(executable_runs),
+            overall_completed=len([run for run in executable_runs if run.status in completed_statuses]),
+            fast_total=len(fast_runs),
+            fast_completed=len([run for run in fast_runs if run.status in completed_statuses]),
+            deep_total=len(deep_runs),
+            deep_completed=len([run for run in deep_runs if run.status in completed_statuses]),
+            running_workers=len(running),
+            completed_workers=len([run for run in executable_runs if run.status in completed_statuses]),
+            timed_out_workers=len([run for run in executable_runs if run.status == HardwareSourceRunStatus.TIMEOUT]),
+            failed_workers=len([run for run in executable_runs if run.status in {HardwareSourceRunStatus.FAILED, HardwareSourceRunStatus.BLOCKED}]),
+            cache_hits=len([run for run in executable_runs if run.cache_hit or run.status == HardwareSourceRunStatus.SKIPPED_CACHE]),
+            current_source=running[0].source_name if running else None,
+            estimated_remaining_seconds=int((avg_duration or 0) * remaining / 1000) if avg_duration else None,
+            worker_runs=runs,
+        )
+
+    def source_health(self) -> list[HardwareSourceHealth]:
+        runs = [run for job in hardware_daily_store.list_jobs() for run in job.source_runs if run.status != HardwareSourceRunStatus.PLANNED]
+        by_source: dict[str, list[HardwareSourceRun]] = {}
+        for run in runs:
+            by_source.setdefault(run.source_name, []).append(run)
+        health: list[HardwareSourceHealth] = []
+        for source_name, source_runs in by_source.items():
+            total = len(source_runs)
+            success_runs = len([run for run in source_runs if run.status in {HardwareSourceRunStatus.SUCCESS, HardwareSourceRunStatus.SKIPPED_CACHE}])
+            zero_result_runs = len([run for run in source_runs if run.status == HardwareSourceRunStatus.ZERO_RESULTS or (run.result_count == 0 and run.status == HardwareSourceRunStatus.SUCCESS)])
+            failed_runs = len([run for run in source_runs if run.status in {HardwareSourceRunStatus.FAILED, HardwareSourceRunStatus.BLOCKED}])
+            timeout_runs = len([run for run in source_runs if run.status == HardwareSourceRunStatus.TIMEOUT])
+            raw_results = sum(run.raw_results or run.result_count for run in source_runs)
+            specific = sum(run.specific_listing_count for run in source_runs)
+            matched = sum(run.matched_state_results for run in source_runs)
+            mismatch = sum(run.state_mismatch_results for run in source_runs)
+            unknown = sum(run.location_unknown_results for run in source_runs)
+            durations = [run.duration_ms for run in source_runs if run.duration_ms]
+            avg_duration = sum(durations) / len(durations) if durations else 0
+            result_rate = (len([run for run in source_runs if run.result_count > 0]) / total) if total else 0
+            specific_rate = (specific / raw_results) if raw_results else 0
+            state_total = matched + mismatch + unknown
+            state_match_rate = (matched / state_total) if state_total else 0
+            needs_review = sum(run.needs_review for run in source_runs)
+            current = sum(run.current_opportunities for run in source_runs)
+            history = sum(run.history for run in source_runs)
+            needs_review_rate = (needs_review / max(1, current + needs_review + history))
+            status = self._source_health_status(total, failed_runs, timeout_runs, zero_result_runs, avg_duration, mismatch, raw_results, result_rate)
+            health.append(
+                HardwareSourceHealth(
+                    source_name=source_name,
+                    scan_lane=source_runs[-1].scan_lane,
+                    total_runs=total,
+                    success_runs=success_runs,
+                    zero_result_runs=zero_result_runs,
+                    failed_runs=failed_runs,
+                    timeout_runs=timeout_runs,
+                    raw_results=raw_results,
+                    matched_state_results=matched,
+                    state_mismatch_results=mismatch,
+                    location_unknown_results=unknown,
+                    specific_listings=specific,
+                    current_opportunities=current,
+                    needs_review=needs_review,
+                    history=history,
+                    avg_duration_ms=avg_duration,
+                    result_rate=result_rate,
+                    specific_listing_rate=specific_rate,
+                    state_match_rate=state_match_rate,
+                    needs_review_rate=needs_review_rate,
+                    last_success_at=max([run.completed_at for run in source_runs if run.status in {HardwareSourceRunStatus.SUCCESS, HardwareSourceRunStatus.SKIPPED_CACHE} and run.completed_at], default=None),
+                    last_failure_at=max([run.completed_at for run in source_runs if run.status in {HardwareSourceRunStatus.FAILED, HardwareSourceRunStatus.TIMEOUT, HardwareSourceRunStatus.BLOCKED} and run.completed_at], default=None),
+                    health_status=status,
+                )
+            )
+        return sorted(health, key=lambda item: item.source_name)
+
+    def query_performance(self) -> list[HardwareQueryPerformance]:
+        runs = [run for job in hardware_daily_store.list_jobs() for run in job.source_runs if run.query_template_id and run.status != HardwareSourceRunStatus.PLANNED]
+        by_key: dict[str, list[HardwareSourceRun]] = {}
+        for run in runs:
+            key = self._run_query_performance_key(run)
+            by_key.setdefault(key, []).append(run)
+        output: list[HardwareQueryPerformance] = []
+        for key, rows in by_key.items():
+            sorted_rows = sorted(rows, key=lambda run: run.started_at or utc_now())
+            consecutive_zero = 0
+            consecutive_failures = 0
+            for run in reversed(sorted_rows):
+                if run.result_count == 0 and run.status in {HardwareSourceRunStatus.SUCCESS, HardwareSourceRunStatus.ZERO_RESULTS, HardwareSourceRunStatus.SKIPPED_CACHE}:
+                    consecutive_zero += 1
+                else:
+                    break
+            for run in reversed(sorted_rows):
+                if run.status in {HardwareSourceRunStatus.FAILED, HardwareSourceRunStatus.TIMEOUT, HardwareSourceRunStatus.BLOCKED}:
+                    consecutive_failures += 1
+                else:
+                    break
+            priority = "normal"
+            if consecutive_failures >= 5:
+                priority = "unstable"
+            elif consecutive_zero >= 5:
+                priority = "low_yield"
+            elif consecutive_zero >= 3:
+                priority = "deprioritize"
+            elif sum(run.specific_listing_count for run in rows) >= 3:
+                priority = "promote_to_fast"
+            latest = sorted_rows[-1]
+            output.append(
+                HardwareQueryPerformance(
+                    query_key=key,
+                    source_name=latest.source_name,
+                    category=latest.category,
+                    state_code=latest.state_code,
+                    query_template=latest.query_template,
+                    scan_lane=latest.scan_lane,
+                    total_runs=len(rows),
+                    consecutive_zero_results=consecutive_zero,
+                    consecutive_failures=consecutive_failures,
+                    raw_results=sum(run.raw_results or run.result_count for run in rows),
+                    specific_listings=sum(run.specific_listing_count for run in rows),
+                    priority_status=priority,
+                    last_run_at=latest.completed_at or latest.started_at,
+                )
+            )
+        return sorted(output, key=lambda item: (item.priority_status, item.source_name, item.query_template or ""))
+
+    def clear_query_cache(self) -> dict:
+        count = hardware_daily_store.clear_query_cache()
+        return {"cleared": count}
+
+    def set_source_enabled(self, source_name: str, enabled: bool) -> dict:
+        normalized = source_name.strip()
+        if not normalized:
+            return {"source_name": source_name, "enabled": enabled, "error": "Missing source name"}
+        if enabled:
+            self._disabled_sources.discard(normalized)
+        else:
+            self._disabled_sources.add(normalized)
+        return {"source_name": normalized, "enabled": enabled}
 
     def dashboard(self):
         hardware_daily_persistence.refresh_counts()
@@ -277,6 +484,7 @@ class HardwareHunterDailyScheduler:
             top_opportunities=top,
             history_opportunities=sorted(history, key=lambda item: item.last_seen_at, reverse=True)[:80],
             needs_review_opportunities=sorted(needs_review, key=lambda item: item.last_seen_at, reverse=True)[:80],
+            source_health=self.source_health(),
         )
 
     async def generate_report(self, job_id: UUID, action="preview", message: str | None = None):
@@ -370,13 +578,15 @@ class HardwareHunterDailyScheduler:
                 hardware_daily_store.save_scheduler_state(self.scheduler_state)
 
     async def _run_asset_searches(self, job: HardwareScanJob, request: HardwareScanRequest) -> list[RawHardwareListing]:
-        selected_queries = job.generated_queries
+        selected_queries = [query for query in job.generated_queries if query.scan_lane == request.scan_lane and query.status != HardwareSourceRunStatus.PLANNED]
+        planned_queries = [query for query in job.generated_queries if query.status == HardwareSourceRunStatus.PLANNED]
         raw_results: list[RawHardwareListing] = []
         web_adapter = self.adapters[0]
         manual_adapter = self.adapters[1]
         semaphore = asyncio.Semaphore(4)
 
         async def run_query(query) -> list[RawHardwareListing]:
+            timeout_seconds = self._query_timeout_seconds(query.scan_lane)
             source_run = HardwareSourceRun(
                 source_name=query.source_group,
                 adapter_type=web_adapter.adapter_type,
@@ -387,26 +597,65 @@ class HardwareHunterDailyScheduler:
                 state_code=query.state_code,
                 state_name=query.state_name,
                 scan_depth=query.scan_depth,
+                scan_lane=query.scan_lane,
                 category=query.category,
-                status=HardwareSourceRunStatus.SEARCHING,
+                status=HardwareSourceRunStatus.RUNNING,
                 started_at=utc_now(),
+                timeout_seconds=timeout_seconds,
             )
             job.source_runs.append(source_run)
             await self._update_job_async(job)
             try:
+                if query.source_group in self._disabled_sources:
+                    source_run.status = HardwareSourceRunStatus.DISABLED
+                    source_run.error_message = "Source disabled by local operator."
+                    query.status = HardwareSourceRunStatus.DISABLED
+                    return []
+                cache_key = self._query_cache_key(query)
+                ttl_minutes = self._cache_ttl_minutes(query.scan_lane)
+                cached_results = await self._get_query_cache_async(cache_key, ttl_minutes) if self.settings.hardware_query_cache_enabled else None
+                if cached_results is not None:
+                    results = self._hydrate_cached_results(cached_results)
+                    for result in results:
+                        result.raw_data["source_run_id"] = str(source_run.id)
+                        result.raw_data["cache_hit"] = True
+                    source_run.status = HardwareSourceRunStatus.SKIPPED_CACHE
+                    source_run.cache_hit = True
+                    source_run.result_count = len(results)
+                    source_run.raw_results = len(results)
+                    source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
+                    query.status = HardwareSourceRunStatus.SKIPPED_CACHE
+                    query.result_count = len(results)
+                    query.specific_listing_count = source_run.specific_listing_count
+                    return results
                 async with semaphore:
-                    results = await asyncio.wait_for(web_adapter.search(query, request), timeout=35)
+                    results = await asyncio.wait_for(web_adapter.search(query, request), timeout=timeout_seconds)
                 for result in results:
                     result.raw_data["source_run_id"] = str(source_run.id)
                     result.raw_data["requested_state"] = query.state_code
                     result.raw_data["requested_states"] = [query.state_code] if query.state_code else []
                     result.requested_states = [query.state_code] if query.state_code else []
-                source_run.status = HardwareSourceRunStatus.SUCCESS
+                if self.settings.hardware_query_cache_enabled:
+                    await self._set_query_cache_async(
+                        cache_key,
+                        {
+                            "source_name": query.source_group,
+                            "category": query.category.value,
+                            "state_code": query.state_code,
+                            "query_normalized": self._normalize_query_key(query.generated_query_en),
+                            "scan_depth": query.scan_depth.value,
+                            "scan_lane": query.scan_lane.value,
+                            "raw_results": self._serialize_raw_results(results),
+                            "result_count": len(results),
+                            "expires_at": utc_now() + timedelta(minutes=ttl_minutes),
+                        },
+                    )
+                source_run.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
                 source_run.result_count = len(results)
                 source_run.raw_results = len(results)
                 source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
                 source_run.zero_result_reason = self._zero_result_reason(source_run, results)
-                query.status = HardwareSourceRunStatus.SUCCESS
+                query.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
                 query.result_count = len(results)
                 query.specific_listing_count = source_run.specific_listing_count
                 query.zero_result_reason = source_run.zero_result_reason
@@ -427,7 +676,32 @@ class HardwareHunterDailyScheduler:
                 return []
             finally:
                 source_run.completed_at = utc_now()
+                if source_run.started_at:
+                    source_run.duration_ms = max(0, int((source_run.completed_at - source_run.started_at).total_seconds() * 1000))
                 await self._update_job_async(job)
+
+        for planned in planned_queries:
+            job.source_runs.append(
+                HardwareSourceRun(
+                    source_name=planned.source_group,
+                    adapter_type=web_adapter.adapter_type,
+                    query=planned.generated_query_en,
+                    expanded_query=planned.generated_query_en,
+                    query_template_id=planned.query_template_id,
+                    query_template=planned.query_template,
+                    state_code=planned.state_code,
+                    state_name=planned.state_name,
+                    scan_depth=planned.scan_depth,
+                    scan_lane=planned.scan_lane,
+                    category=planned.category,
+                    status=HardwareSourceRunStatus.PLANNED,
+                    started_at=utc_now(),
+                    completed_at=utc_now(),
+                    error_message="Deep Scan source is planned for V2.6B and was not executed in this Fast Scan.",
+                )
+            )
+        if planned_queries:
+            await self._update_job_async(job)
 
         if selected_queries:
             batches = await asyncio.gather(*(run_query(query) for query in selected_queries))
@@ -491,6 +765,11 @@ class HardwareHunterDailyScheduler:
             raw.matched_requested_state = match.matched_requested_state
             raw.state_match_status = match.state_match_status
             raw.filter_reason = match.filter_reason
+            raw.raw_data["requested_states"] = match.requested_states
+            raw.raw_data["detected_state"] = match.detected_state
+            raw.raw_data["matched_requested_state"] = match.matched_requested_state
+            raw.raw_data["state_match_status"] = match.state_match_status
+            raw.raw_data["filter_reason"] = match.filter_reason
             source_run_id = str(raw.raw_data.get("source_run_id") or "")
             if not source_run_id:
                 continue
@@ -573,6 +852,24 @@ class HardwareHunterDailyScheduler:
             seen.add(key)
             output.append(item)
         return output, duplicates
+
+    def _apply_source_run_opportunity_counts(self, job: HardwareScanJob, opportunities) -> None:
+        runs_by_id = {str(run.id): run for run in job.source_runs}
+        for run in runs_by_id.values():
+            run.current_opportunities = 0
+            run.needs_review = 0
+            run.history = 0
+        for opportunity in opportunities:
+            source_run_id = str((opportunity.raw_data_json or {}).get("source_run_id") or "")
+            run = runs_by_id.get(source_run_id)
+            if not run:
+                continue
+            if self._is_current_opportunity(opportunity):
+                run.current_opportunities += 1
+            elif self._is_needs_review_opportunity(opportunity):
+                run.needs_review += 1
+            elif self._is_history_opportunity(opportunity):
+                run.history += 1
 
     def _is_current_opportunity(self, opportunity) -> bool:
         if getattr(opportunity, "requested_states", None) and opportunity.state_match_status != "matched":
@@ -677,6 +974,79 @@ class HardwareHunterDailyScheduler:
         if "403" in message or "captcha" in message or "blocked" in message:
             return HardwareSourceRunStatus.BLOCKED
         return HardwareSourceRunStatus.FAILED
+
+    def _query_timeout_seconds(self, scan_lane: HardwareScanLane) -> int:
+        if scan_lane == HardwareScanLane.DEEP:
+            return max(5, self.settings.hardware_deep_query_timeout_seconds)
+        return max(5, self.settings.hardware_fast_query_timeout_seconds)
+
+    def _cache_ttl_minutes(self, scan_lane: HardwareScanLane) -> int:
+        if scan_lane == HardwareScanLane.DEEP:
+            return max(1, self.settings.hardware_query_cache_ttl_deep_minutes)
+        return max(1, self.settings.hardware_query_cache_ttl_fast_minutes)
+
+    def _query_cache_key(self, query) -> str:
+        raw = "|".join(
+            [
+                query.source_group,
+                query.category.value,
+                query.state_code or "all",
+                self._normalize_query_key(query.generated_query_en),
+                query.scan_depth.value,
+                query.scan_lane.value,
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _normalize_query_key(self, query: str) -> str:
+        return " ".join(query.lower().replace('"', "").split())
+
+    def _serialize_raw_results(self, results: list[RawHardwareListing]) -> list[dict]:
+        return [result.model_dump(mode="json") for result in results]
+
+    def _hydrate_cached_results(self, cached_results: list) -> list[RawHardwareListing]:
+        hydrated: list[RawHardwareListing] = []
+        for item in cached_results:
+            try:
+                hydrated.append(RawHardwareListing.model_validate(item))
+            except Exception:
+                continue
+        return hydrated
+
+    def _run_query_performance_key(self, run: HardwareSourceRun) -> str:
+        raw = "|".join(
+            [
+                run.source_name,
+                run.category.value if run.category else "all",
+                run.state_code or "all",
+                run.query_template_id or run.query_template or self._normalize_query_key(run.query or ""),
+                run.scan_lane.value,
+            ]
+        )
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _source_health_status(
+        self,
+        total: int,
+        failed_runs: int,
+        timeout_runs: int,
+        zero_result_runs: int,
+        avg_duration_ms: float,
+        state_mismatch_results: int,
+        raw_results: int,
+        result_rate: float,
+    ) -> HardwareSourceHealthStatus:
+        if total <= 0:
+            return HardwareSourceHealthStatus.LOW_YIELD
+        if failed_runs + timeout_runs >= max(3, total * 0.4):
+            return HardwareSourceHealthStatus.UNSTABLE
+        if avg_duration_ms >= 15000:
+            return HardwareSourceHealthStatus.SLOW
+        if raw_results and state_mismatch_results / max(raw_results, 1) >= 0.6:
+            return HardwareSourceHealthStatus.NOISY
+        if zero_result_runs >= max(3, total * 0.7) or result_rate < 0.15:
+            return HardwareSourceHealthStatus.LOW_YIELD
+        return HardwareSourceHealthStatus.HEALTHY
 
     def _zero_result_reason(self, source_run: HardwareSourceRun, results: list[RawHardwareListing]) -> HardwareZeroResultReason | None:
         if source_run.result_count > 0 and source_run.specific_listing_count == 0:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from app.hardware_daily.models import (
@@ -22,6 +23,7 @@ class HardwareDailyMemoryStore:
         self.opportunities_by_key: dict[str, HardwareOpportunity] = {}
         self.price_history: list[HardwarePriceHistoryRecord] = []
         self.telegram_logs: list[TelegramDeliveryLog] = []
+        self.query_cache: dict[str, dict] = {}
         self.scheduler_state_path = Path(__file__).resolve().parents[2] / "data" / "hardware_scheduler_state.json"
         self.scheduler_state = hardware_daily_persistence.load_scheduler_state() or self._load_scheduler_state()
         if hardware_daily_persistence.enabled:
@@ -100,6 +102,35 @@ class HardwareDailyMemoryStore:
             and log.status.value == "sent"
             for log in self.telegram_logs
         )
+
+    def get_cached_query(self, cache_key: str, ttl_minutes: int) -> list | None:
+        cached = self.query_cache.get(cache_key)
+        if not cached and hardware_daily_persistence.enabled:
+            cached = hardware_daily_persistence.get_query_cache(cache_key)
+            if cached:
+                self.query_cache[cache_key] = cached
+        if not cached:
+            return None
+        cached_at = cached.get("cached_at")
+        try:
+            parsed_cached_at = datetime.fromisoformat(cached_at.replace("Z", "+00:00")) if isinstance(cached_at, str) else cached_at
+            age = utc_now() - parsed_cached_at
+        except Exception:
+            return None
+        if age > timedelta(minutes=ttl_minutes):
+            return None
+        return cached.get("raw_results") or []
+
+    def set_cached_query(self, cache_key: str, payload: dict) -> None:
+        payload["cached_at"] = payload.get("cached_at") or utc_now()
+        self.query_cache[cache_key] = payload
+        hardware_daily_persistence.upsert_query_cache(cache_key, payload)
+
+    def clear_query_cache(self) -> int:
+        count = len(self.query_cache)
+        self.query_cache.clear()
+        hardware_daily_persistence.clear_query_cache()
+        return count
 
     def save_scheduler_state(self, state: HardwareSchedulerState) -> HardwareSchedulerState:
         self.scheduler_state = state

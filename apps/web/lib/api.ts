@@ -12,8 +12,11 @@ import type {
   HardwareDailyReport,
   HardwareListingRecheckSummary,
   HardwareOpportunity,
+  HardwareQueryPerformance,
   HardwareSchedulerState,
   HardwareScanJob,
+  HardwareScanProgress,
+  HardwareSourceHealth,
 } from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -234,6 +237,7 @@ export type HardwareDailyScanPayload = {
   max_results_per_query: number;
   max_queries_per_category: number;
   scan_depth?: "quick" | "standard" | "deep";
+  scan_lane?: "fast" | "deep";
   send_telegram: boolean;
   manual_urls?: string[];
   manual_text?: string | null;
@@ -258,6 +262,30 @@ export async function getHardwareDailyScanJob(jobId: string): Promise<HardwareSc
 export async function getHardwareDashboard(): Promise<HardwareDashboard> {
   const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/dashboard`, { cache: "no-store" });
   if (!response.ok) throw new Error("Hardware dashboard failed");
+  return response.json();
+}
+
+export async function getHardwareScanProgress(jobId: string): Promise<HardwareScanProgress> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/scan-progress/${jobId}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Hardware scan progress failed");
+  return response.json();
+}
+
+export async function getHardwareSourceHealth(): Promise<HardwareSourceHealth[]> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/source-health`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Hardware source health failed");
+  return response.json();
+}
+
+export async function getHardwareQueryPerformance(): Promise<HardwareQueryPerformance[]> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/query-performance`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Hardware query performance failed");
+  return response.json();
+}
+
+export async function clearHardwareQueryCache(): Promise<{ cleared: number }> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/cache/clear`, { method: "POST" });
+  if (!response.ok) throw new Error("Hardware query cache clear failed");
   return response.json();
 }
 

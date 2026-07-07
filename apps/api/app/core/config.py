@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     hardware_hunter_daily_report_hour: int = 8
     hardware_hunter_timezone: str = "America/Los_Angeles"
     hardware_hunter_immediate_alerts: bool = False
+    hardware_query_cache_enabled: bool = True
+    hardware_query_cache_ttl_fast_minutes: int = 30
+    hardware_query_cache_ttl_deep_minutes: int = 120
+    hardware_fast_query_timeout_seconds: int = 12
+    hardware_deep_query_timeout_seconds: int = 20
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

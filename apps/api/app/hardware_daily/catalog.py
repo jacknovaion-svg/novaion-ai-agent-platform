@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, HardwareScanDepth
+from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, HardwareScanDepth, HardwareScanLane
 
 
 ACTIVE_SOURCE_DOMAINS = {
@@ -21,6 +21,61 @@ RESERVED_SOURCE_DOMAINS = {
     "R2 Directory": "sustainableelectronics.org",
     "e-Stewards Directory": "e-stewards.org",
     "NAID AAA Directory": "isigmaonline.org",
+}
+
+DEEP_PLANNED_SOURCE_DOMAINS = {
+    "eBay": "ebay.com",
+    "HGP Industrial Auctions": "hgpauction.com",
+    "GSA Auctions": "gsaauctions.gov",
+    "AllSurplus": "allsurplus.com",
+    "BidSpotter": "bidspotter.com",
+    "Proxibid": "proxibid.com",
+}
+
+SOURCE_CONFIGS = {
+    "GovDeals": {
+        "enabled": True,
+        "scan_lane": HardwareScanLane.FAST,
+        "default_timeout_seconds": 12,
+        "max_retries": 0,
+        "max_concurrency": 1,
+        "cache_ttl_minutes": 30,
+        "categories_supported": [category.value for category in HardwareCategory],
+        "health_status": "healthy",
+    },
+    "Public Surplus": {
+        "enabled": True,
+        "scan_lane": HardwareScanLane.FAST,
+        "default_timeout_seconds": 12,
+        "max_retries": 0,
+        "max_concurrency": 1,
+        "cache_ttl_minutes": 30,
+        "categories_supported": [category.value for category in HardwareCategory],
+        "health_status": "healthy",
+    },
+    "Municibid": {
+        "enabled": True,
+        "scan_lane": HardwareScanLane.FAST,
+        "default_timeout_seconds": 12,
+        "max_retries": 0,
+        "max_concurrency": 1,
+        "cache_ttl_minutes": 30,
+        "categories_supported": [category.value for category in HardwareCategory],
+        "health_status": "healthy",
+    },
+    **{
+        name: {
+            "enabled": False,
+            "scan_lane": HardwareScanLane.DEEP,
+            "default_timeout_seconds": 20,
+            "max_retries": 0,
+            "max_concurrency": 1,
+            "cache_ttl_minutes": 120,
+            "categories_supported": [category.value for category in HardwareCategory],
+            "health_status": "planned",
+        }
+        for name in ["eBay", "HGP Industrial Auctions", "GSA Auctions", "AllSurplus", "BidSpotter", "Proxibid"]
+    },
 }
 
 
@@ -137,6 +192,7 @@ class HardwareSearchQueryBuilder:
         states: list[str] | None = None,
         max_queries_per_category: int = 8,
         scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD,
+        scan_lane: HardwareScanLane = HardwareScanLane.FAST,
     ) -> list[HardwareGeneratedQuery]:
         selected_categories = categories or list(HardwareCategory)
         state_targets = self._state_targets(states or [])
@@ -145,7 +201,13 @@ class HardwareSearchQueryBuilder:
         seen: set[str] = set()
         for category in selected_categories:
             category_terms = CATEGORY_TERMS[category]
-            for source_name, domain in ACTIVE_SOURCE_DOMAINS.items():
+            source_domains = ACTIVE_SOURCE_DOMAINS if scan_lane == HardwareScanLane.FAST else DEEP_PLANNED_SOURCE_DOMAINS
+            enabled_sources = {
+                source_name: domain
+                for source_name, domain in source_domains.items()
+                if SOURCE_CONFIGS.get(source_name, {}).get("enabled", False) or scan_lane == HardwareScanLane.FAST
+            }
+            for source_name, domain in enabled_sources.items():
                 source_query_limit = min(query_limit, SOURCE_QUERY_LIMITS.get(source_name, query_limit))
                 for target in state_targets:
                     for index, term in enumerate(category_terms[:source_query_limit], start=1):
@@ -165,8 +227,40 @@ class HardwareSearchQueryBuilder:
                                 state_name=target["state_name"],
                                 location_phrase=target["location_phrase"],
                                 scan_depth=scan_depth,
+                                scan_lane=scan_lane,
                             )
                         )
+        return queries
+
+    def planned_deep_queries(
+        self,
+        categories: list[HardwareCategory] | None = None,
+        states: list[str] | None = None,
+        scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD,
+    ) -> list[HardwareGeneratedQuery]:
+        selected_categories = categories or list(HardwareCategory)
+        state_targets = self._state_targets(states or [])
+        queries: list[HardwareGeneratedQuery] = []
+        for category in selected_categories:
+            term = CATEGORY_TERMS[category][0]
+            for source_name, domain in DEEP_PLANNED_SOURCE_DOMAINS.items():
+                target = state_targets[0]
+                query = self._build_source_query(source_name, domain, term, target["location_phrase"])
+                queries.append(
+                    HardwareGeneratedQuery(
+                        category=category,
+                        source_group=source_name,
+                        generated_query_en=query,
+                        query_template_id=f"{source_name.lower().replace(' ', '_')}:planned:{category.value}",
+                        query_template=term,
+                        state_code=target["state_code"],
+                        state_name=target["state_name"],
+                        location_phrase=target["location_phrase"],
+                        scan_depth=scan_depth,
+                        scan_lane=HardwareScanLane.DEEP,
+                        status="planned",
+                    )
+                )
         return queries
 
     def _state_targets(self, states: list[str]) -> list[dict[str, str | None]]:

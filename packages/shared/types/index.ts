@@ -193,10 +193,22 @@ export interface SupplierSearchJob {
 }
 
 export type HardwareScanJobStatus = "created" | "running" | "partially_completed" | "completed" | "failed";
-export type HardwareSourceRunStatus = "pending" | "searching" | "success" | "failed" | "timeout" | "blocked" | "disabled";
+export type HardwareSourceRunStatus =
+  | "pending"
+  | "searching"
+  | "running"
+  | "success"
+  | "zero_results"
+  | "failed"
+  | "timeout"
+  | "blocked"
+  | "skipped_cache"
+  | "disabled"
+  | "planned";
 export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
 export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu";
 export type HardwareScanDepth = "quick" | "standard" | "deep";
+export type HardwareScanLane = "fast" | "deep";
 export type HardwareCondition =
   | "new"
   | "open_box"
@@ -232,6 +244,7 @@ export interface HardwareGeneratedQuery {
   state_name?: string | null;
   location_phrase?: string | null;
   scan_depth: HardwareScanDepth;
+  scan_lane?: HardwareScanLane;
   status: HardwareSourceRunStatus;
   result_count: number;
   specific_listing_count: number;
@@ -249,6 +262,7 @@ export interface HardwareSourceRun {
   state_code?: string | null;
   state_name?: string | null;
   scan_depth: HardwareScanDepth;
+  scan_lane?: HardwareScanLane;
   category?: HardwareCategory | null;
   status: HardwareSourceRunStatus;
   result_count: number;
@@ -264,6 +278,13 @@ export interface HardwareSourceRun {
   zero_result_reason?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
+  duration_ms?: number | null;
+  timeout_seconds?: number | null;
+  retry_count?: number;
+  cache_hit?: boolean;
+  current_opportunities?: number;
+  needs_review?: number;
+  history?: number;
   error_message?: string | null;
 }
 
@@ -490,6 +511,7 @@ export interface HardwareScanJob {
   status: HardwareScanJobStatus;
   categories: HardwareCategory[];
   states: string[];
+  scan_lane?: HardwareScanLane;
   generated_queries: HardwareGeneratedQuery[];
   source_runs: HardwareSourceRun[];
   opportunities: HardwareOpportunity[];
@@ -499,6 +521,69 @@ export interface HardwareScanJob {
   created_at: string;
   updated_at: string;
   completed_at?: string | null;
+}
+
+export interface HardwareSourceHealth {
+  source_name: string;
+  enabled: boolean;
+  scan_lane: HardwareScanLane;
+  total_runs: number;
+  success_runs: number;
+  zero_result_runs: number;
+  failed_runs: number;
+  timeout_runs: number;
+  raw_results: number;
+  matched_state_results: number;
+  state_mismatch_results: number;
+  location_unknown_results: number;
+  specific_listings: number;
+  current_opportunities: number;
+  needs_review: number;
+  history: number;
+  avg_duration_ms: number;
+  result_rate: number;
+  specific_listing_rate: number;
+  state_match_rate: number;
+  needs_review_rate: number;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  health_status: "healthy" | "slow" | "noisy" | "low_yield" | "unstable" | "disabled";
+}
+
+export interface HardwareQueryPerformance {
+  query_key: string;
+  source_name: string;
+  category?: HardwareCategory | null;
+  state_code?: string | null;
+  query_template?: string | null;
+  scan_lane: HardwareScanLane;
+  total_runs: number;
+  consecutive_zero_results: number;
+  consecutive_failures: number;
+  raw_results: number;
+  specific_listings: number;
+  priority_status: string;
+  last_run_at?: string | null;
+}
+
+export interface HardwareScanProgress {
+  job_id: string;
+  status: HardwareScanJobStatus;
+  scan_lane: HardwareScanLane;
+  overall_total: number;
+  overall_completed: number;
+  fast_total: number;
+  fast_completed: number;
+  deep_total: number;
+  deep_completed: number;
+  running_workers: number;
+  completed_workers: number;
+  timed_out_workers: number;
+  failed_workers: number;
+  cache_hits: number;
+  current_source?: string | null;
+  estimated_remaining_seconds?: number | null;
+  worker_runs: HardwareSourceRun[];
 }
 
 export interface HardwareDashboard {
@@ -524,6 +609,7 @@ export interface HardwareDashboard {
   top_opportunities: HardwareOpportunity[];
   history_opportunities: HardwareOpportunity[];
   needs_review_opportunities: HardwareOpportunity[];
+  source_health?: HardwareSourceHealth[];
 }
 
 export interface HardwareListingRecheckSummary {
