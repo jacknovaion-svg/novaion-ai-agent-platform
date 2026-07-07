@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     hardware_hunter_daily_report_hour: int = 8
     hardware_hunter_timezone: str = "America/Los_Angeles"
     hardware_hunter_immediate_alerts: bool = False
+    hardware_hunter_scheduler_enabled: bool = False
     hardware_query_cache_enabled: bool = True
     hardware_query_cache_ttl_fast_minutes: int = 30
     hardware_query_cache_ttl_deep_minutes: int = 120

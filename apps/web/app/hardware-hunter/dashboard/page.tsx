@@ -191,6 +191,10 @@ export default function HardwareDashboardPage() {
   const report = job?.report ?? dashboard?.latest_job?.report;
   const stats = job?.quality_stats ?? dashboard?.latest_job?.quality_stats;
   const scheduler = dashboard?.scheduler;
+  const filterExplanation = useMemo(
+    () => buildFilterExplanation(latestJob, stats),
+    [latestJob, stats],
+  );
 
   useEffect(() => {
     void refreshDashboard();
@@ -792,6 +796,7 @@ export default function HardwareDashboardPage() {
               t={t}
               compact
             />
+            {filterExplanation ? <FilterExplanationCard explanation={filterExplanation} /> : null}
           </section>
 
           <section className="panel compact-panel">
@@ -1264,6 +1269,32 @@ function SourceHealthTable({ sourceHealth }: { sourceHealth: NonNullable<Hardwar
   );
 }
 
+type FilterExplanation = {
+  rawResults: number;
+  filteredOut: number;
+  stateMismatches: number;
+  locationUnknown: number;
+  needsReview: number;
+};
+
+function FilterExplanationCard({ explanation }: { explanation: FilterExplanation }) {
+  return (
+    <div className="filter-explanation-card">
+      <div>
+        <strong>Scan completed. No current opportunities matched the selected state filters.</strong>
+        <p>扫描已完成，但没有符合当前州筛选的有效机会。</p>
+      </div>
+      <div className="quality-strip">
+        <span>Raw results / 原始结果 <strong>{explanation.rawResults}</strong></span>
+        <span>Filtered out / 已过滤 <strong>{explanation.filteredOut}</strong></span>
+        <span>State mismatches / 州不匹配 <strong>{explanation.stateMismatches}</strong></span>
+        <span>Location unknown / 地点未知 <strong>{explanation.locationUnknown}</strong></span>
+        <span>Needs review / 待核查 <strong>{explanation.needsReview}</strong></span>
+      </div>
+    </div>
+  );
+}
+
 function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | undefined }) {
   const items = [
     ["Raw", stats?.raw_results ?? 0],
@@ -1293,6 +1324,25 @@ function QualityDetails({ stats }: { stats: HardwareScanJob["quality_stats"] | u
       ))}
     </div>
   );
+}
+
+function buildFilterExplanation(job: HardwareScanJob | null, stats: HardwareScanJob["quality_stats"] | undefined): FilterExplanation | null {
+  if (!job || !stats) return null;
+  if (!["completed", "partially_completed"].includes(job.status)) return null;
+  if ((stats.raw_results ?? 0) <= 0) return null;
+  if ((stats.final_opportunities ?? 0) > 0) return null;
+  const filteredOut = stats.filtered_out_results ?? 0;
+  const stateMismatches = stats.state_mismatch_results ?? 0;
+  const locationUnknown = stats.location_unknown_results ?? 0;
+  const needsReview = stats.needs_manual_review ?? 0;
+  if (filteredOut + stateMismatches + locationUnknown + needsReview <= 0) return null;
+  return {
+    rawResults: stats.raw_results ?? 0,
+    filteredOut,
+    stateMismatches,
+    locationUnknown,
+    needsReview,
+  };
 }
 
 function buildSourceQualityStats(sourceRuns: HardwareSourceRun[]) {

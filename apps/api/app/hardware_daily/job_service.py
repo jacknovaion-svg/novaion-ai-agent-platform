@@ -63,6 +63,7 @@ class HardwareHunterDailyScheduler:
         self._recover_interrupted_job()
         self._recover_stale_running_jobs()
         self._recover_orphaned_source_runs()
+        self._apply_local_scheduler_default()
         self._refresh_next_run()
 
     def _recover_interrupted_job(self) -> None:
@@ -121,6 +122,16 @@ class HardwareHunterDailyScheduler:
                 run.error_message = "Parent scan job was interrupted before completion."
                 changed = True
         return changed
+
+    def _apply_local_scheduler_default(self) -> None:
+        if self.settings.hardware_hunter_scheduler_enabled:
+            return
+        if self.scheduler_state.enabled or self.scheduler_state.status != SchedulerStatus.PAUSED:
+            self.scheduler_state.status = SchedulerStatus.PAUSED
+            self.scheduler_state.enabled = False
+            self.scheduler_state.next_run_at = None
+            self.scheduler_state.last_error = "Scheduler is paused by local development default."
+            hardware_daily_store.save_scheduler_state(self.scheduler_state)
 
     def start_background_loop(self) -> None:
         if self._loop_task and not self._loop_task.done():
