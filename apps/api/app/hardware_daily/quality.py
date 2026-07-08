@@ -64,6 +64,8 @@ class HardwareResultQualityClassifier:
             return True
         if "hgpauction.com" in domain and any(token in path for token in ["/lot/", "/lots/", "/item/", "/auction/"]) and self._has_specific_lot_language(text):
             return True
+        if "govauctions.app" in domain and "/auction/" in path:
+            return True
         return self._has_specific_lot_language(text) and any(token in path for token in ["/lot", "/item", "/asset", "/listing", "/auction"])
 
     def _is_listing_collection(self, path: str, query: dict[str, list[str]], text: str) -> bool:

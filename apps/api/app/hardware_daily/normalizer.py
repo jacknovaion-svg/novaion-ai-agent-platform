@@ -48,7 +48,8 @@ class HardwareListingNormalizer:
         buyer_premium = self._buyer_premium(text, detail)
         if buyer_premium and "buyer_premium" not in risk_flags:
             risk_flags.append("buyer_premium")
-        canonical_url = self.canonical_url(raw.source_url)
+        canonical_source_url = detail.get("canonical_source_url") or raw.raw_data.get("canonical_source_url") or raw.raw_data.get("original_source_url")
+        canonical_url = self.canonical_url(str(canonical_source_url or raw.source_url))
         listing_status = self._listing_status(detail, lower)
         end_time_utc = self._datetime_or_none(detail.get("end_time_utc")) or self._datetime_or_none(detail.get("auction_end_time"))
         countdown_captured_at = self._datetime_or_none(detail.get("countdown_captured_at"))
@@ -127,7 +128,7 @@ class HardwareListingNormalizer:
             seller_name=seller_name,
             seller_type=self._seller_type(lower, raw.source_name),
             source=raw.source_name,
-            source_url=raw.source_url,
+            source_url=str(canonical_source_url or raw.source_url),
             canonical_url=canonical_url,
             source_listing_id=source_listing_id,
             external_id=source_listing_id,

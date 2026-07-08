@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import quote_plus
 
+from app.core.config import get_settings
 from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, HardwareScanDepth, HardwareScanLane, HardwareScanScope
 
 
@@ -10,6 +12,7 @@ ACTIVE_SOURCE_DOMAINS = {
     "Public Surplus": "publicsurplus.com",
     "Municibid": "municibid.com",
     "GSA Auctions": "gsaauctions.gov",
+    "GovAuctions.app": "govauctions.app",
 }
 
 RESERVED_SOURCE_DOMAINS = {
@@ -73,6 +76,17 @@ SOURCE_CONFIGS = {
         "categories_supported": [category.value for category in HardwareCategory],
         "health_status": "healthy",
         "source_type": "auction_public_json_or_search",
+    },
+    "GovAuctions.app": {
+        "enabled": True,
+        "scan_lane": HardwareScanLane.FAST,
+        "default_timeout_seconds": 12,
+        "max_retries": 0,
+        "max_concurrency": 1,
+        "cache_ttl_minutes": 30,
+        "categories_supported": [category.value for category in HardwareCategory],
+        "health_status": "healthy",
+        "source_type": "aggregator_meta_source",
     },
     **{
         name: {
@@ -271,10 +285,14 @@ class HardwareSearchQueryBuilder:
         for category in selected_categories:
             category_terms = CATEGORY_TERMS[category]
             source_domains = ACTIVE_SOURCE_DOMAINS if scan_lane == HardwareScanLane.FAST else DEEP_PLANNED_SOURCE_DOMAINS
+            settings = get_settings()
             enabled_sources = {
                 source_name: domain
                 for source_name, domain in source_domains.items()
-                if SOURCE_CONFIGS.get(source_name, {}).get("enabled", False) or scan_lane == HardwareScanLane.FAST
+                if (
+                    (source_name != "GovAuctions.app" or settings.enable_govauctions_app_source)
+                    and (SOURCE_CONFIGS.get(source_name, {}).get("enabled", False) or scan_lane == HardwareScanLane.FAST)
+                )
             }
             for source_name, domain in enabled_sources.items():
                 source_query_limit = min(query_limit, SOURCE_QUERY_LIMITS.get(source_name, query_limit))
@@ -359,6 +377,8 @@ class HardwareSearchQueryBuilder:
             parts = [f"site:{domain}", quoted_term, '"Computers & IT"', "government auction", location_phrase]
         elif source_name == "GSA Auctions":
             parts = [f"site:{domain}", quoted_term, "government auction", location_phrase]
+        elif source_name == "GovAuctions.app":
+            parts = [f"https://{domain}/feed?q={quote_plus(term)}&sort=relevance"]
         elif source_name == "AllSurplus":
             parts = [f"site:{domain}", quoted_term, "auction lot", "surplus", location_phrase]
         elif source_name in {"BidSpotter", "Proxibid"}:

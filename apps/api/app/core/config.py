@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     hardware_query_cache_ttl_deep_minutes: int = 120
     hardware_fast_query_timeout_seconds: int = 12
     hardware_deep_query_timeout_seconds: int = 20
+    enable_govauctions_app_source: bool = True
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

@@ -150,6 +150,8 @@ class TelegramHardwareDailyReporter:
         return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
     def _eligible_for_top_report(self, item) -> bool:
+        if item.raw_data_json.get("discovery_source") == "GovAuctions.app" and item.raw_data_json.get("verification_status") != "verified":
+            return False
         if self._has_review_blocker(item) or self._has_past_end_time(item):
             return False
         if item.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:

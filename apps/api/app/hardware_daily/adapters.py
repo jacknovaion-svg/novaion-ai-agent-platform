@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,7 @@ from urllib.parse import quote_plus, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from app.adapters.browser import chromium_browser
 from app.hardware_daily.models import HardwareResultPageType, HardwareScanRequest, RawHardwareListing, utc_now
 from app.hardware_daily.quality import HardwareResultQualityClassifier
 from app.site_hunter.web_search import WebSearchClient
@@ -40,6 +42,8 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
         self.quality = HardwareResultQualityClassifier()
 
     async def search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
+        if query.source_group == "GovAuctions.app":
+            return await self._govauctions_app_search(query, request)
         if query.source_group == "GovDeals":
             return await self._govdeals_search(query, request)
         if query.source_group == "GSA Auctions":
@@ -355,6 +359,14 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
         except ValueError:
             return None
 
+    def _extract_price(self, text: str | None) -> float | None:
+        if not text:
+            return None
+        match = re.search(r"\$\s?([0-9][0-9,]*(?:\.\d{2})?)", text)
+        if not match:
+            return None
+        return self._money_float(match.group(1))
+
     def _parse_gsa_datetime(self, value: str | None) -> str | None:
         if not value:
             return None
@@ -387,6 +399,279 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                 return "ending_soon"
             return "active"
         return "unknown"
+
+    async def _govauctions_app_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
+        keyword = self._marketplace_keyword(query)
+        feed_url = f"https://govauctions.app/feed?q={quote_plus(keyword)}&sort=relevance"
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (compatible; NOVAIONHardwareHunter/2.8A; +https://novaion.ai)",
+        }
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+            response = await client.get(feed_url)
+            response.raise_for_status()
+            html = response.text
+
+        soup = BeautifulSoup(html, "html.parser")
+        listings: list[RawHardwareListing] = []
+        seen: set[str] = set()
+        links = soup.select('a[href^="/auction/"], a[href*="govauctions.app/auction/"]')
+        if not links:
+            links = self._govauctions_links_from_next_chunks(html)
+        if not links:
+            rendered_html = await self._govauctions_rendered_html(feed_url)
+            if rendered_html:
+                soup = BeautifulSoup(rendered_html, "html.parser")
+                links = soup.select('a[href^="/auction/"], a[href*="govauctions.app/auction/"]') or self._govauctions_links_from_next_chunks(rendered_html)
+        for link in links:
+            href = link.get("href") if hasattr(link, "get") else str(link)
+            if not href:
+                continue
+            govauctions_url = urljoin("https://govauctions.app", href)
+            if govauctions_url in seen:
+                continue
+            seen.add(govauctions_url)
+            container_text = self._govauctions_card_text(link)
+            parsed = self._parse_govauctions_card(govauctions_url, container_text, query.category, keyword)
+            if not parsed:
+                continue
+            title = parsed["title"]
+            snippet = parsed["snippet"]
+            if not self._is_category_relevant(query.category.value, title, snippet):
+                continue
+            original_source = parsed["original_source_platform"] or "GovAuctions.app"
+            source_url = parsed["canonical_source_url"] or govauctions_url
+            source_listing_id = parsed["source_listing_id"]
+            detail = {
+                "source_listing_id": source_listing_id,
+                "title": title,
+                "description": snippet,
+                "current_price": parsed["current_price"],
+                "total_price": parsed["current_price"],
+                "location_city": parsed["location_city"],
+                "location_state": parsed["location_state"],
+                "location_text": parsed["location_text"],
+                "time_remaining": parsed["time_remaining"],
+                "countdown_raw_text": parsed["time_remaining"],
+                "countdown_captured_at": utc_now().isoformat() if parsed["time_remaining"] else None,
+                "calculated_end_time": parsed["calculated_end_time"],
+                "calculated_timezone": "UTC" if parsed["calculated_end_time"] else None,
+                "calculation_confidence": "aggregator_countdown_estimated" if parsed["calculated_end_time"] else None,
+                "end_time_utc": parsed["calculated_end_time"],
+                "end_time_raw": parsed["time_remaining"],
+                "end_time_verification": "countdown_estimated" if parsed["calculated_end_time"] else "unknown",
+                "listing_status": parsed["listing_status"],
+                "listing_status_reason": "GovAuctions.app aggregator discovery; original source verification is still required.",
+                "needs_manual_review": True,
+                "unavailable_reason": "pending_original_source_verification",
+                "canonical_source_url": parsed["canonical_source_url"],
+                "original_source_url": parsed["canonical_source_url"],
+                "original_source_platform": original_source,
+                "discovery_source": "GovAuctions.app",
+                "verification_status": "pending",
+            }
+            listings.append(
+                RawHardwareListing(
+                    source_name=original_source,
+                    source_url=source_url,
+                    original_title=title,
+                    original_description=snippet,
+                    category=query.category,
+                    source_listing_id=source_listing_id,
+                    page_type=HardwareResultPageType.SPECIFIC_LISTING,
+                    classification_reason="GovAuctions.app aggregator card mapped as a candidate specific auction listing.",
+                    raw_data={
+                        "query": query.generated_query_en,
+                        "domain": "govauctions.app",
+                        "adapter_type": "govauctions_app_feed",
+                        "source_type": "aggregator_meta_source",
+                        "discovery_source": "GovAuctions.app",
+                        "discovery_source_url": feed_url,
+                        "govauctions_url": govauctions_url,
+                        "original_source_platform": original_source,
+                        "original_source_url": parsed["canonical_source_url"],
+                        "canonical_source_url": parsed["canonical_source_url"],
+                        "verification_status": "pending",
+                        "last_verified_at": None,
+                        "source_access_mode": "aggregator_discovery",
+                        "matched_keywords": [keyword],
+                        "page_type": HardwareResultPageType.SPECIFIC_LISTING.value,
+                        "classification_reason": "Aggregator result requires original source verification before Telegram.",
+                        "detail": detail,
+                    },
+                    fetched_at=utc_now(),
+                )
+            )
+            if len(listings) >= request.max_results_per_query:
+                break
+        return listings
+
+    async def _govauctions_rendered_html(self, feed_url: str) -> str | None:
+        try:
+            async with chromium_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(feed_url, wait_until="domcontentloaded", timeout=7000)
+                try:
+                    await page.wait_for_selector('a[href^="/auction/"]', timeout=5000)
+                except Exception:
+                    pass
+                return await asyncio.wait_for(page.content(), timeout=3)
+        except Exception:
+            return None
+
+    def _govauctions_links_from_next_chunks(self, html: str) -> list[str]:
+        html = html.replace("\\u002F", "/").replace("\\/", "/")
+        hrefs = re.findall(r'(/auction/[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]+)', html)
+        return list(dict.fromkeys(hrefs))
+
+    def _govauctions_card_text(self, link) -> str:
+        if not hasattr(link, "get_text"):
+            return str(link)
+        parts: list[str] = []
+        for node in [link, link.find_parent(), link.find_parent().find_parent() if link.find_parent() else None]:
+            if not node:
+                continue
+            text = node.get_text(" ", strip=True)
+            if text and text not in parts:
+                parts.append(text)
+        return " ".join(parts)[:1200]
+
+    def _parse_govauctions_card(self, govauctions_url: str, text: str, category: HardwareCategory, keyword: str) -> dict | None:
+        slug = urlparse(govauctions_url).path.rstrip("/").split("/")[-1]
+        if not slug:
+            return None
+        platform, platform_ids = self._govauctions_platform_from_slug(slug, text)
+        title = self._govauctions_title_from_text(text, slug, platform)
+        snippet = text or title
+        if not title:
+            return None
+        price = self._extract_price(snippet)
+        location = self._govauctions_location(snippet, slug)
+        countdown = self._govauctions_countdown(snippet)
+        calculated_end = self._govauctions_calculated_end_time(countdown)
+        listing_status = self._govauctions_listing_status(calculated_end, snippet)
+        canonical_url = self._govauctions_original_url(platform, platform_ids)
+        source_listing_id = self._govauctions_source_listing_id(platform, platform_ids, slug)
+        return {
+            "title": title,
+            "snippet": snippet[:900],
+            "current_price": price,
+            "original_source_platform": platform,
+            "canonical_source_url": canonical_url,
+            "source_listing_id": source_listing_id,
+            "location_city": location.get("city"),
+            "location_state": location.get("state"),
+            "location_text": location.get("text"),
+            "time_remaining": countdown,
+            "calculated_end_time": calculated_end,
+            "listing_status": listing_status,
+            "matched_keyword": keyword,
+            "category": category.value,
+        }
+
+    def _govauctions_platform_from_slug(self, slug: str, text: str) -> tuple[str | None, list[str]]:
+        platforms = {
+            "govdeals": "GovDeals",
+            "gsa-auctions": "GSA Auctions",
+            "gsaauctions": "GSA Auctions",
+            "public-surplus": "Public Surplus",
+            "publicsurplus": "Public Surplus",
+            "govplanet": "GovPlanet",
+            "municibid": "Municibid",
+            "allsurplus": "AllSurplus",
+            "proxibid": "Proxibid",
+            "bidspotter": "BidSpotter",
+            "hibid": "HiBid",
+        }
+        lower = slug.lower()
+        for token, platform in platforms.items():
+            match = re.search(rf"(?:^|-){re.escape(token)}-(\d+)(?:-(\d+))?(?:$|-)", lower)
+            if match:
+                return platform, [value for value in match.groups() if value]
+        text_lower = text.lower()
+        for token, platform in platforms.items():
+            if token.replace("-", " ") in text_lower or token in text_lower:
+                trailing = re.findall(r"(\d{2,})", slug)
+                return platform, trailing[-2:]
+        return None, re.findall(r"(\d{2,})", slug)[-2:]
+
+    def _govauctions_original_url(self, platform: str | None, ids: list[str]) -> str | None:
+        if not platform or not ids:
+            return None
+        if platform == "GovDeals" and len(ids) >= 2:
+            return f"https://www.govdeals.com/en/asset/{ids[0]}/{ids[1]}"
+        if platform == "Public Surplus" and ids:
+            return f"https://www.publicsurplus.com/sms/auction/view?auc={ids[-1]}"
+        if platform == "GSA Auctions":
+            return f"https://gsaauctions.gov/auctions/auctions-list?search={quote_plus(' '.join(ids))}"
+        return None
+
+    def _govauctions_source_listing_id(self, platform: str | None, ids: list[str], slug: str) -> str:
+        if platform and ids:
+            normalized_platform = platform.lower().replace(" ", "_")
+            return f"{normalized_platform}:{':'.join(ids)}"
+        return f"govauctions:{slug}"
+
+    def _govauctions_title_from_text(self, text: str, slug: str, platform: str | None) -> str:
+        cleaned = re.sub(r"🔥?\s*\d+\s*bids?", "", text, flags=re.I)
+        cleaned = re.sub(r"\$\s?[0-9][0-9,]*(?:\.\d{2})?", " ", cleaned)
+        cleaned = re.sub(r"⏰\s*[^·]+", " ", cleaned)
+        if platform:
+            cleaned = re.split(re.escape(platform), cleaned, flags=re.I)[0]
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" -·")
+        if cleaned and len(cleaned) >= 6 and "/auction/" not in cleaned.lower() and "govauctions.app" not in cleaned.lower():
+            return cleaned[:220]
+        words = slug.replace("-", " ")
+        for token in ["govdeals", "public surplus", "gsa auctions", "gsaauctions", "govplanet"]:
+            words = words.replace(token, "")
+        words = re.sub(r"\b\d+\b", "", words)
+        return re.sub(r"\s+", " ", words).strip().title()[:220]
+
+    def _govauctions_location(self, text: str, slug: str) -> dict[str, str | None]:
+        location_match = re.search(r"([A-Z][A-Za-z .'-]{2,}),\s*([A-Z]{2})(?:\b| ·)", text)
+        if location_match:
+            city = location_match.group(1).strip()
+            state = location_match.group(2).strip()
+            return {"city": city, "state": state, "text": f"{city}, {state}"}
+        slug_match = re.search(r"-([a-z][a-z-]+)-([a-z]{2})-(?:govdeals|public-surplus|gsa-auctions|govplanet|municibid)", slug, re.I)
+        if slug_match:
+            city = slug_match.group(1).replace("-", " ").title()
+            state = slug_match.group(2).upper()
+            return {"city": city, "state": state, "text": f"{city}, {state}"}
+        return {"city": None, "state": None, "text": None}
+
+    def _govauctions_countdown(self, text: str) -> str | None:
+        match = re.search(r"(?:⏰\s*)?(\d+\s*d(?:ays?)?\s+\d+\s*h(?:ours?)?|\d+\s*h(?:ours?)?\s+\d+\s*m(?:in(?:ute)?s?)?|\d+\s*d(?:ays?)?|\d+\s*h(?:ours?)?|\d+\s*m(?:in(?:ute)?s?)?)", text, re.I)
+        return match.group(1).strip() if match else None
+
+    def _govauctions_calculated_end_time(self, countdown: str | None) -> str | None:
+        if not countdown:
+            return None
+        lower = countdown.lower()
+        days = re.search(r"(\d+)\s*d", lower) or re.search(r"(\d+)\s*day", lower)
+        hours = re.search(r"(\d+)\s*h", lower) or re.search(r"(\d+)\s*hour", lower)
+        minutes = re.search(r"(\d+)\s*m", lower) or re.search(r"(\d+)\s*min", lower)
+        delta = timedelta(
+            days=int(days.group(1)) if days else 0,
+            hours=int(hours.group(1)) if hours else 0,
+            minutes=int(minutes.group(1)) if minutes else 0,
+        )
+        if delta.total_seconds() <= 0:
+            return None
+        return (utc_now() + delta).isoformat()
+
+    def _govauctions_listing_status(self, calculated_end_time: str | None, text: str) -> str:
+        lower = text.lower()
+        if any(token in lower for token in ["auction ended", "closed", "sold", "no longer available"]):
+            return "ended"
+        if not calculated_end_time:
+            return "needs_manual_review"
+        end_time = datetime.fromisoformat(calculated_end_time)
+        if end_time <= utc_now():
+            return "ended"
+        if end_time - utc_now() <= timedelta(hours=24):
+            return "ending_soon"
+        return "active"
 
     def _is_relevant(self, title: str, snippet: str | None, domain: str | None) -> bool:
         haystack = f"{title} {snippet or ''} {domain or ''}".lower()
@@ -582,6 +867,7 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             "site:govdeals.com",
             "site:municibid.com",
             "site:gsaauctions.gov",
+            "site:govauctions.app",
             "site:allsurplus.com",
             "site:bidspotter.com",
             "site:proxibid.com",
@@ -756,6 +1042,8 @@ class ManualHardwareImportAdapter(HardwareSourceAdapter):
             return "BidSpotter"
         if "ebay.com" in domain:
             return "eBay"
+        if "govauctions.app" in domain:
+            return "GovAuctions.app"
         return self.source_name
 
     def _title_for_url(self, url: str, text: str | None) -> str:

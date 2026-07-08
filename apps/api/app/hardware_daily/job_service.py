@@ -885,6 +885,16 @@ class HardwareHunterDailyScheduler:
     async def _enrich_specific_listings(self, raw_results: list[RawHardwareListing]) -> list[RawHardwareListing]:
         enriched: list[RawHardwareListing] = []
         for raw in raw_results:
+            if raw.raw_data.get("adapter_type") == "govauctions_app_feed" and raw.raw_data.get("verification_status") != "verified":
+                raw.detail_checked_at = utc_now()
+                raw.detail_parse_status = "pending_original_source_verification"
+                detail = dict(raw.raw_data.get("detail") or {})
+                detail["needs_manual_review"] = True
+                detail["unavailable_reason"] = "pending_original_source_verification"
+                detail["listing_status_reason"] = "GovAuctions.app discovery requires original source verification."
+                raw.raw_data["detail"] = detail
+                enriched.append(raw)
+                continue
             try:
                 enriched.append(await asyncio.wait_for(self.detail_parser.enrich(raw), timeout=25))
             except Exception as exc:

@@ -67,7 +67,7 @@ type ReviewFormPayload = {
   review_notes: string;
 };
 
-const sourceCount = 4;
+const sourceCount = 5;
 const scanDepthQueryCounts: Record<ScanDepth, number> = {
   quick: 2,
   standard: 5,
@@ -1500,6 +1500,10 @@ function OpportunityDrawer({
             <Detail label="Condition" value={opportunity.condition} />
             <Detail label="Completeness" value={opportunity.component_completeness} />
             <Detail label="Location" value={opportunityLocation(opportunity)} />
+            <Detail label="Discovery Source" value={rawDataString(opportunity, "discovery_source")} />
+            <Detail label="Original Source" value={rawDataString(opportunity, "original_source_platform")} />
+            <Detail label="Verification Status" value={rawDataString(opportunity, "verification_status")} />
+            <Detail label="Last Verified At" value={formatDate(rawDataString(opportunity, "last_verified_at"))} />
             <Detail label="Matched Keywords" value={matchedKeywords(opportunity).join(", ")} />
             <Detail label="End Time" value={formatEndTime(opportunity)} />
             <Detail label="User Time" value={formatDate(opportunity.end_time_user_timezone)} />
@@ -1529,6 +1533,9 @@ function OpportunityDrawer({
           <div className="drawer-url">
             <span className="section-label">Canonical URL</span>
             <p>{opportunity.canonical_url ?? opportunity.source_url}</p>
+            {rawDataString(opportunity, "govauctions_url") ? (
+              <p className="muted">Discovery URL: {rawDataString(opportunity, "govauctions_url")}</p>
+            ) : null}
           </div>
           <div className="actions">
             <button className="button secondary" type="button" onClick={() => onRecheck(opportunity.opportunity_id)}>
@@ -1812,6 +1819,13 @@ function matchedKeywords(item: HardwareOpportunity) {
   const rawKeywords = item.raw_data_json?.matched_keywords;
   const values = item.matched_keywords ?? (Array.isArray(rawKeywords) ? rawKeywords.map(String) : []);
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function rawDataString(item: HardwareOpportunity, key: string) {
+  const value = item.raw_data_json?.[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return null;
 }
 
 function normalizeStateCode(value?: string | null) {
