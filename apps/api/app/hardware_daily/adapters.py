@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import re
 from urllib.parse import quote_plus, urljoin, urlparse
 
 import httpx
@@ -39,6 +40,8 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
         self.quality = HardwareResultQualityClassifier()
 
     async def search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
+        if query.source_group == "GovDeals":
+            return await self._govdeals_search(query, request)
         if query.source_group == "GSA Auctions":
             direct_results = await self._gsa_auctions_search(query, request)
             if direct_results:
@@ -83,6 +86,81 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                 )
             )
         return listings
+
+    async def _govdeals_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
+        keyword = self._marketplace_keyword(query)
+        direct_status = await self._govdeals_direct_probe(keyword)
+        try:
+            hits = await self.web_search.search(query.generated_query_en, max_results=request.max_results_per_query)
+        except Exception:
+            hits = await self._bing_search(query.generated_query_en, max_results=request.max_results_per_query)
+
+        listings: list[RawHardwareListing] = []
+        for hit in hits:
+            if "govdeals.com" not in (hit.domain or "").lower() and "govdeals.com" not in hit.url.lower():
+                continue
+            if not self._is_relevant(hit.title, hit.snippet, hit.domain):
+                continue
+            if not self._is_category_relevant(query.category.value, hit.title, hit.snippet):
+                continue
+            classification = self.quality.classify("GovDeals", hit.url, hit.title, hit.snippet)
+            listings.append(
+                RawHardwareListing(
+                    source_name="GovDeals",
+                    source_url=hit.url,
+                    original_title=hit.title,
+                    original_description=hit.snippet,
+                    category=query.category,
+                    page_type=classification.page_type,
+                    classification_reason=classification.reason,
+                    raw_data={
+                        "query": query.generated_query_en,
+                        "domain": hit.domain,
+                        "adapter_type": "govdeals_web_discovery_fallback",
+                        "source_type": "auction_restricted_web_discovery",
+                        "source_access_mode": "web_discovery_fallback",
+                        "source_access_status": direct_status,
+                        "source_access_note": (
+                            "GovDeals direct search is restricted for backend HTTP in this environment; "
+                            "public search discovery is used and Manual Import can ingest known GovDeals listing URLs."
+                        ),
+                        "public_search_discovery": True,
+                        "page_type": classification.page_type.value,
+                        "classification_reason": classification.reason,
+                    },
+                    fetched_at=utc_now(),
+                )
+            )
+            if len(listings) >= request.max_results_per_query:
+                break
+        return listings
+
+    async def _govdeals_direct_probe(self, keyword: str) -> str:
+        urls = [
+            f"https://www.govdeals.com/search?query={quote_plus(keyword)}",
+            f"https://www.govdeals.com/en/search?query={quote_plus(keyword)}",
+            f"https://www.govdeals.com/en/auctions?search={quote_plus(keyword)}",
+        ]
+        headers = {
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (compatible; NOVAIONHardwareHunter/2.7B; +https://novaion.ai)",
+        }
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=headers) as client:
+            for url in urls:
+                try:
+                    response = await client.get(url)
+                except httpx.TimeoutException:
+                    return "direct_search_timeout"
+                except Exception as exc:
+                    return f"direct_search_error:{str(exc)[:80]}"
+                body_sample = response.text[:1000].lower()
+                if response.status_code in {401, 403} or "access denied" in body_sample:
+                    return f"direct_search_restricted:{response.status_code}"
+                if response.status_code < 400:
+                    return "direct_search_accessible"
+                if response.status_code >= 500:
+                    return f"direct_search_server_error:{response.status_code}"
+        return "direct_search_unavailable"
 
     async def _gsa_auctions_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
         keyword = self._marketplace_keyword(query)
@@ -578,21 +656,39 @@ class ManualHardwareImportAdapter(HardwareSourceAdapter):
 
     async def search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
         listings: list[RawHardwareListing] = []
-        for url in request.manual_urls:
-            classification = self.quality.classify(self.source_name, str(url), str(url), request.manual_text)
+        urls = self._extract_urls(request.manual_text or "")
+        urls.extend(str(url) for url in request.manual_urls)
+        seen: set[str] = set()
+        for url in urls:
+            normalized_url = self._normalize_url(url)
+            if not normalized_url or normalized_url in seen:
+                continue
+            seen.add(normalized_url)
+            source_name = self._infer_source(normalized_url)
+            title = self._title_for_url(normalized_url, request.manual_text)
+            snippet = self._snippet_for_url(normalized_url, request.manual_text)
+            classification = self.quality.classify(source_name, normalized_url, title, snippet)
             listings.append(
                 RawHardwareListing(
-                    source_name=self.source_name,
-                    source_url=str(url),
-                    original_title=str(url),
-                    original_description=request.manual_text,
+                    source_name=source_name,
+                    source_url=normalized_url,
+                    original_title=title,
+                    original_description=snippet,
                     category=query.category,
                     page_type=classification.page_type,
                     classification_reason=classification.reason,
-                    raw_data={"query": query.generated_query_en, "manual": True},
+                    raw_data={
+                        "query": query.generated_query_en,
+                        "manual": True,
+                        "adapter_type": self.adapter_type,
+                        "source_access_mode": "manual_import",
+                        "matched_keywords": [getattr(query, "query_template", None) or "manual import"],
+                        "page_type": classification.page_type.value,
+                        "classification_reason": classification.reason,
+                    },
                 )
             )
-        if request.manual_text and not request.manual_urls:
+        if request.manual_text and not listings:
             listings.append(
                 RawHardwareListing(
                     source_name=self.source_name,
@@ -604,3 +700,69 @@ class ManualHardwareImportAdapter(HardwareSourceAdapter):
                 )
             )
         return listings
+
+    def _extract_urls(self, text: str) -> list[str]:
+        urls = re.findall(r"https?://[^\s\"'<>]+", text or "")
+        relative_patterns = [
+            r"/en/asset/[A-Za-z0-9\-_/?.=&%]+",
+            r"/sms/auction/view\?auc=\d+[A-Za-z0-9\-_/?.=&%]*",
+        ]
+        for pattern in relative_patterns:
+            for match in re.findall(pattern, text or ""):
+                if match.startswith("/en/asset/"):
+                    urls.append(urljoin("https://www.govdeals.com", match))
+                elif match.startswith("/sms/auction/view"):
+                    urls.append(urljoin("https://www.publicsurplus.com", match))
+        return urls
+
+    def _normalize_url(self, url: str) -> str | None:
+        cleaned = (url or "").strip().strip(".,);]'\"")
+        if not cleaned:
+            return None
+        parsed = urlparse(cleaned)
+        if not parsed.scheme or not parsed.netloc:
+            return None
+        return cleaned
+
+    def _infer_source(self, url: str) -> str:
+        domain = urlparse(url).netloc.lower()
+        if "govdeals.com" in domain:
+            return "GovDeals"
+        if "publicsurplus.com" in domain:
+            return "Public Surplus"
+        if "municibid.com" in domain:
+            return "Municibid"
+        if "gsaauctions.gov" in domain:
+            return "GSA Auctions"
+        if "hibid.com" in domain:
+            return "HiBid"
+        if "proxibid.com" in domain:
+            return "Proxibid"
+        if "bidspotter.com" in domain:
+            return "BidSpotter"
+        if "ebay.com" in domain:
+            return "eBay"
+        return self.source_name
+
+    def _title_for_url(self, url: str, text: str | None) -> str:
+        if text:
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            for index, line in enumerate(lines):
+                if url in line:
+                    candidates = [line, *(lines[max(0, index - 2):index])]
+                    for candidate in candidates:
+                        if len(candidate) > 12 and not candidate.startswith("http"):
+                            return candidate[:180]
+        parsed = urlparse(url)
+        source = self._infer_source(url)
+        return f"{source} listing {parsed.path.rstrip('/').split('/')[-1] or parsed.netloc}"
+
+    def _snippet_for_url(self, url: str, text: str | None) -> str | None:
+        if not text:
+            return None
+        idx = text.find(url)
+        if idx < 0:
+            return text[:800]
+        start = max(0, idx - 300)
+        end = min(len(text), idx + len(url) + 500)
+        return text[start:end].strip()

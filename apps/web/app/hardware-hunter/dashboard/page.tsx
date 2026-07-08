@@ -165,6 +165,7 @@ export default function HardwareDashboardPage() {
   const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
   const [telegramOpen, setTelegramOpen] = useState(false);
   const [recheckSummary, setRecheckSummary] = useState<string | null>(null);
+  const [manualImportText, setManualImportText] = useState("");
 
   const activeJobId = job?.id ?? dashboard?.latest_job?.id;
   const allKnownOpportunities = useMemo(
@@ -243,10 +244,12 @@ export default function HardwareDashboardPage() {
     [regionStrategy, scanScope, selectedStates, t],
   );
   const estimatedTasks = useMemo(
-    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane, scanScope),
-    [regionStrategy, scanScope, selectedStates.length, selectedCategories.length, scanDepth, scanLane],
+    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane, scanScope, Boolean(manualImportText.trim())),
+    [regionStrategy, scanScope, selectedStates.length, selectedCategories.length, scanDepth, scanLane, manualImportText],
   );
-  const activeSourceCount = scanLane === "fast" ? sourceCount : 0;
+  const automatedSourceCount = scanLane === "fast" ? sourceCount : 0;
+  const manualImportTaskCount = manualImportText.trim() ? 1 : 0;
+  const activeSourceCount = automatedSourceCount + manualImportTaskCount;
   const runButtonLabel = useMemo(() => {
     if (busy || scanProgress.isScanning) return t("scanning");
     if (job?.status === "cancelled") return t("cancelled");
@@ -294,6 +297,7 @@ export default function HardwareDashboardPage() {
         scan_depth: scanDepth,
         scan_lane: scanLane,
         send_telegram: false,
+        manual_text: manualImportText.trim() || null,
       });
       setJob(created);
       setProgress(null);
@@ -656,6 +660,19 @@ export default function HardwareDashboardPage() {
           </label>
         </div>
 
+        <div className="manual-import-row">
+          <label className="field compact-field">
+            <span>{t("manualImport")}</span>
+            <textarea
+              className="textarea compact-textarea"
+              value={manualImportText}
+              onChange={(event) => setManualImportText(event.target.value)}
+              placeholder={t("manualImportPlaceholder")}
+            />
+            <small className="strategy-help">{t("manualImportHelp")}</small>
+          </label>
+        </div>
+
         <div className="scan-action-row">
           <div className="scan-action-main">
             <button className="button gold run-scan-button" onClick={startScan} disabled={busy || scanProgress.isScanning || selectedCategories.length === 0}>
@@ -679,7 +696,7 @@ export default function HardwareDashboardPage() {
               {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {activeSourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
             </div>
             <div className="scan-summary">
-              {t("queryPreview")}: {activeSourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × up to {scanDepthQueryCounts[scanDepth]} keywords = {estimatedTasks} {t("tasks")}
+              {t("queryPreview")}: {automatedSourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × up to {scanDepthQueryCounts[scanDepth]} keywords{manualImportTaskCount ? ` + ${t("manualImport")}` : ""} = {estimatedTasks} {t("tasks")}
               {estimatedTasks >= 100 ? ` · ${t("largeScanWarning")}` : ""}
             </div>
             {scanProgress.isScanning ? (
@@ -2093,12 +2110,12 @@ function normalizeState(input: string) {
   return stateLookup.get(key) ?? null;
 }
 
-function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth, scanLane: ScanLane, scanScope: ScanScope) {
+function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth, scanLane: ScanLane, scanScope: ScanScope, hasManualImport: boolean) {
   if (scanLane === "deep") return 0;
   const regionFactor = scanScope === "nationwide" || strategy === "all_us" ? 1 : Math.max(stateCount, 1);
   const queryCount = scanDepthQueryCounts[scanDepth];
   const fastSourceQueries = queryCount * 3 + Math.min(queryCount, 3);
-  return regionFactor * categoryCount * fastSourceQueries;
+  return regionFactor * categoryCount * fastSourceQueries + (hasManualImport ? 1 : 0);
 }
 
 function buildScanProgress(job: HardwareScanJob | null, progress: HardwareScanProgress | null) {

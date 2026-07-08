@@ -481,6 +481,14 @@ th {
   border-top: 1px solid rgba(35, 49, 73, 0.8);
 }
 
+.manual-import-row {
+  padding-top: 10px;
+}
+
+.compact-textarea {
+  min-height: 78px;
+}
+
 .compact-field {
   gap: 5px;
 }
