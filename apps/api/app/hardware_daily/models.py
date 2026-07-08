@@ -46,6 +46,8 @@ class HardwareCategory(str, Enum):
     MEMORY = "memory"
     STORAGE = "storage"
     CPU = "cpu"
+    NETWORKING = "networking"
+    COMPUTERS_IT = "computers_it"
 
 
 class HardwareCondition(str, Enum):

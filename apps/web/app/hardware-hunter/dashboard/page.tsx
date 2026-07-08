@@ -33,7 +33,7 @@ import type {
   HardwareSourceRun,
 } from "@novaion/shared/types";
 
-const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "cpu"];
+const categories: HardwareCategory[] = ["servers", "gpu", "memory", "storage", "cpu", "networking", "computers_it"];
 const tabs = ["overview", "opportunities", "needs review", "source runs", "telegram reports"] as const;
 type Tab = (typeof tabs)[number];
 type SortBy = "score" | "newest" | "price" | "auction" | "risk";
@@ -2077,6 +2077,8 @@ function categoryLabel(category: HardwareCategory, t: (key: string) => string) {
     memory: t("memory"),
     storage: t("storageDevices"),
     cpu: t("cpuShort"),
+    networking: "Networking / 网络设备",
+    computers_it: "Computers IT / 电脑IT",
   };
   return labels[category];
 }

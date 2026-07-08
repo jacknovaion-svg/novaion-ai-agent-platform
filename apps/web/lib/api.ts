@@ -17,6 +17,7 @@ import type {
   HardwareScanJob,
   HardwareScanProgress,
   HardwareSourceHealth,
+  HardwareCategory,
 } from "@novaion/shared/types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -231,7 +232,7 @@ export async function reviewSupplier(supplierId: string, status: string, notes?:
 
 export type HardwareDailyScanPayload = {
   mode: "asset_listing_search" | "supplier_lead_search" | "both";
-  categories: Array<"servers" | "gpu" | "memory" | "storage" | "cpu">;
+  categories: HardwareCategory[];
   states: string[];
   test_run: boolean;
   max_results_per_query: number;

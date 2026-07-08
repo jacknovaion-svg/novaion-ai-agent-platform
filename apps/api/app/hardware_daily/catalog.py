@@ -9,6 +9,7 @@ ACTIVE_SOURCE_DOMAINS = {
     "GovDeals": "govdeals.com",
     "Public Surplus": "publicsurplus.com",
     "Municibid": "municibid.com",
+    "GSA Auctions": "gsaauctions.gov",
 }
 
 RESERVED_SOURCE_DOMAINS = {
@@ -26,7 +27,6 @@ RESERVED_SOURCE_DOMAINS = {
 DEEP_PLANNED_SOURCE_DOMAINS = {
     "eBay": "ebay.com",
     "HGP Industrial Auctions": "hgpauction.com",
-    "GSA Auctions": "gsaauctions.gov",
     "AllSurplus": "allsurplus.com",
     "BidSpotter": "bidspotter.com",
     "Proxibid": "proxibid.com",
@@ -63,6 +63,17 @@ SOURCE_CONFIGS = {
         "categories_supported": [category.value for category in HardwareCategory],
         "health_status": "healthy",
     },
+    "GSA Auctions": {
+        "enabled": True,
+        "scan_lane": HardwareScanLane.FAST,
+        "default_timeout_seconds": 12,
+        "max_retries": 0,
+        "max_concurrency": 1,
+        "cache_ttl_minutes": 30,
+        "categories_supported": [category.value for category in HardwareCategory],
+        "health_status": "healthy",
+        "source_type": "auction_public_json_or_search",
+    },
     **{
         name: {
             "enabled": False,
@@ -74,7 +85,7 @@ SOURCE_CONFIGS = {
             "categories_supported": [category.value for category in HardwareCategory],
             "health_status": "planned",
         }
-        for name in ["eBay", "HGP Industrial Auctions", "GSA Auctions", "AllSurplus", "BidSpotter", "Proxibid"]
+        for name in ["eBay", "HGP Industrial Auctions", "AllSurplus", "BidSpotter", "Proxibid"]
     },
 }
 
@@ -137,6 +148,26 @@ CATEGORY_TERMS: dict[HardwareCategory, list[str]] = {
         "CPU lot",
         "matched CPU pairs",
         "processor lot",
+    ],
+    HardwareCategory.NETWORKING: [
+        "Cisco switch",
+        "Juniper switch",
+        "network switch",
+        "router",
+        "firewall",
+        "networking equipment",
+        "Cisco lot",
+        "Juniper router",
+    ],
+    HardwareCategory.COMPUTERS_IT: [
+        "computer equipment",
+        "workstation",
+        "desktop computer",
+        "laptop lot",
+        "electronics lot",
+        "IT equipment",
+        "computer lot",
+        "office computers",
     ],
 }
 

@@ -206,7 +206,7 @@ export type HardwareSourceRunStatus =
   | "disabled"
   | "planned";
 export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
-export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu";
+export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu" | "networking" | "computers_it";
 export type HardwareScanDepth = "quick" | "standard" | "deep";
 export type HardwareScanLane = "fast" | "deep";
 export type HardwareCondition =
