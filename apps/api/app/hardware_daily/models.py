@@ -193,6 +193,14 @@ class HardwareScanRequest(BaseModel):
     manual_text: str | None = None
 
 
+class HardwareBrowserImportRequest(BaseModel):
+    source_url: HttpUrl
+    visible_text: str
+    category: HardwareCategory = HardwareCategory.SERVERS
+    source_name: str = "GovDeals"
+    captured_by: str | None = None
+
+
 class HardwareGeneratedQuery(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     category: HardwareCategory

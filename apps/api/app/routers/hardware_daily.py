@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.hardware_daily.job_service import hardware_daily_scheduler
 from app.hardware_daily.models import (
+    HardwareBrowserImportRequest,
     HardwareDailyReport,
     HardwareDashboard,
     HardwareListingRecheckSummary,
@@ -53,6 +54,11 @@ def cancel_daily_scan_job(job_id: UUID) -> HardwareScanJob:
 @router.get("/daily-scan/dashboard", response_model=HardwareDashboard)
 def get_hardware_dashboard() -> HardwareDashboard:
     return hardware_daily_scheduler.dashboard()
+
+
+@router.post("/browser-import/visible-page", response_model=HardwareScanJob)
+async def import_browser_visible_page(payload: HardwareBrowserImportRequest) -> HardwareScanJob:
+    return await hardware_daily_scheduler.import_browser_visible_page(payload)
 
 
 @router.get("/scan-progress/{job_id}", response_model=HardwareScanProgress)

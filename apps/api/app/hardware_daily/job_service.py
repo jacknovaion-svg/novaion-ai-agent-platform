@@ -10,8 +10,10 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 from app.hardware_daily.adapters import ManualHardwareImportAdapter, WebSearchHardwareAdapter
+from app.hardware_daily.browser_import import GovDealsVisibleTextParser
 from app.hardware_daily.catalog import HardwareSearchQueryBuilder
 from app.hardware_daily.models import (
+    HardwareBrowserImportRequest,
     HardwareCategory,
     HardwareQualityStats,
     HardwareResultPageType,
@@ -54,6 +56,7 @@ class HardwareHunterDailyScheduler:
         self.normalizer = HardwareListingNormalizer()
         self.scoring = HardwareOpportunityScoringService()
         self.reporter = TelegramHardwareDailyReporter()
+        self.browser_import_parser = GovDealsVisibleTextParser()
         self.adapters = [WebSearchHardwareAdapter(), ManualHardwareImportAdapter()]
         self.scheduler_state = hardware_daily_store.scheduler_state
         self._active_tasks: set[UUID] = set()
@@ -291,6 +294,74 @@ class HardwareHunterDailyScheduler:
             await self._save_scheduler_state_async()
             self._active_tasks.discard(job_id)
             self._cancelled_tasks.discard(job_id)
+
+    async def import_browser_visible_page(self, payload: HardwareBrowserImportRequest) -> HardwareScanJob:
+        job = HardwareScanJob(
+            mode=HardwareScanMode.ASSET_LISTING_SEARCH,
+            categories=[payload.category],
+            states=[],
+            scan_scope=HardwareScanScope.NATIONWIDE,
+            scan_lane=HardwareScanLane.FAST,
+        )
+        hardware_daily_store.create_job(job)
+        job.status = HardwareScanJobStatus.RUNNING
+        started_at = utc_now()
+        source_run = HardwareSourceRun(
+            source_name=payload.source_name,
+            adapter_type="browser_assisted_visible_text",
+            query=str(payload.source_url),
+            expanded_query=str(payload.source_url),
+            category=payload.category,
+            status=HardwareSourceRunStatus.SEARCHING,
+            started_at=started_at,
+        )
+        job.source_runs.append(source_run)
+        await self._update_job_async(job)
+        try:
+            raw = self.browser_import_parser.parse(str(payload.source_url), payload.visible_text, payload.category)
+            raw.raw_data["captured_by"] = payload.captured_by or "browser_assisted_import"
+            raw.raw_data["source_run_id"] = str(source_run.id)
+            raw.detail_checked_at = utc_now()
+            raw.detail_parse_status = "browser_visible_text_parsed"
+            raw_results = [raw]
+            self._apply_state_matching(raw_results, job)
+            stats = self._quality_stats(raw_results, job)
+            normalized = [listing_status_recheck_service._apply_status_rules(self.normalizer.normalize(raw))]
+            remembered = []
+            for opportunity in normalized:
+                key = self.normalizer.opportunity_key(opportunity)
+                saved, changes = await self._remember_opportunity_async(key, opportunity, job.id)
+                saved.change_types = changes
+                remembered.append(saved)
+            scored = self.scoring.score(remembered)
+            self._apply_source_run_opportunity_counts(job, scored)
+            source_run.status = HardwareSourceRunStatus.SUCCESS
+            source_run.result_count = len(raw_results)
+            source_run.raw_results = len(raw_results)
+            source_run.specific_listing_count = len(raw_results)
+            source_run.completed_at = utc_now()
+            stats.normalized_listings = len(normalized)
+            stats.active_opportunities = len([item for item in scored if item.listing_status == ListingStatus.ACTIVE])
+            stats.ending_soon = len([item for item in scored if item.listing_status == ListingStatus.ENDING_SOON])
+            stats.expired_removed = len([item for item in scored if self._is_history_opportunity(item)])
+            stats.needs_manual_review = len([item for item in scored if self._is_needs_review_opportunity(item)])
+            job.opportunities = [item for item in scored if self._is_current_opportunity(item)][:120]
+            stats.final_opportunities = len(job.opportunities)
+            stats.high_score_opportunities = len([item for item in job.opportunities if item.opportunity_score >= 60])
+            job.quality_stats = stats
+            job.status = HardwareScanJobStatus.COMPLETED if job.opportunities else HardwareScanJobStatus.PARTIALLY_COMPLETED
+            job.report = await self.reporter.build_and_send(job, action="preview")
+        except Exception as exc:
+            source_run.status = HardwareSourceRunStatus.FAILED
+            source_run.error_message = str(exc)[:500]
+            source_run.completed_at = utc_now()
+            job.status = HardwareScanJobStatus.FAILED
+            job.error_message = str(exc)[:500]
+        finally:
+            job.completed_at = utc_now()
+            await self._update_job_async(job)
+            await self._save_scan_job_async(job)
+        return job
 
     def _is_cancelled(self, job_id: UUID) -> bool:
         return job_id in self._cancelled_tasks
