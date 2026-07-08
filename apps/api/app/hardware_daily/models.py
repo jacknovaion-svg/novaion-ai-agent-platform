@@ -18,6 +18,7 @@ class HardwareScanJobStatus(str, Enum):
     PARTIALLY_COMPLETED = "partially_completed"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class HardwareSourceRunStatus(str, Enum):
@@ -32,6 +33,7 @@ class HardwareSourceRunStatus(str, Enum):
     SKIPPED_CACHE = "skipped_cache"
     DISABLED = "disabled"
     PLANNED = "planned"
+    CANCELLED = "cancelled"
 
 
 class HardwareScanMode(str, Enum):

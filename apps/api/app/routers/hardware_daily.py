@@ -42,6 +42,14 @@ def get_daily_scan_job(job_id: UUID) -> HardwareScanJob:
     return job
 
 
+@router.post("/daily-scan/jobs/{job_id}/cancel", response_model=HardwareScanJob)
+def cancel_daily_scan_job(job_id: UUID) -> HardwareScanJob:
+    job = hardware_daily_scheduler.cancel_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Hardware daily scan job not found")
+    return job
+
+
 @router.get("/daily-scan/dashboard", response_model=HardwareDashboard)
 def get_hardware_dashboard() -> HardwareDashboard:
     return hardware_daily_scheduler.dashboard()

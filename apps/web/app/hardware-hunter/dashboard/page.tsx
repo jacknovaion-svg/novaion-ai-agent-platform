@@ -13,6 +13,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import {
   bulkReviewHardwareOpportunities,
+  cancelHardwareDailyScan,
   createHardwareTelegramReport,
   getHardwareDailyScanJob,
   getHardwareDashboard,
@@ -148,6 +149,7 @@ export default function HardwareDashboardPage() {
   const [scanLane, setScanLane] = useState<ScanLane>("fast");
   const [progress, setProgress] = useState<HardwareScanProgress | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("overview");
   const [showQuality, setShowQuality] = useState(false);
@@ -201,7 +203,7 @@ export default function HardwareDashboardPage() {
   }, []);
 
   useEffect(() => {
-    if (!activeJobId || ["completed", "partially_completed", "failed"].includes(job?.status ?? "")) return;
+    if (!activeJobId || isTerminalJobStatus(job?.status)) return;
     const timer = window.setInterval(async () => {
       try {
         const latestProgress = await getHardwareScanProgress(activeJobId);
@@ -211,7 +213,7 @@ export default function HardwareDashboardPage() {
       }
       const latest = await getHardwareDailyScanJob(activeJobId);
       setJob(latest);
-      if (["completed", "partially_completed", "failed"].includes(latest.status)) {
+      if (isTerminalJobStatus(latest.status)) {
         setProgress(null);
         setResultScope("current_scan");
         if (latest.states.length === 1) setStateFilter(latest.states[0]);
@@ -245,6 +247,7 @@ export default function HardwareDashboardPage() {
   const activeSourceCount = scanLane === "fast" ? sourceCount : 0;
   const runButtonLabel = useMemo(() => {
     if (busy || scanProgress.isScanning) return t("scanning");
+    if (job?.status === "cancelled") return t("cancelled");
     if (job?.status === "completed" || job?.status === "partially_completed") return t("completed");
     if (job?.status === "failed") return t("failed");
     return t("runScanNow");
@@ -297,6 +300,23 @@ export default function HardwareDashboardPage() {
       setError(err instanceof Error ? err.message : "Scan failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function stopCurrentScan() {
+    if (!activeJobId) return;
+    setCancelBusy(true);
+    setError(null);
+    try {
+      const cancelled = await cancelHardwareDailyScan(activeJobId);
+      setJob(cancelled);
+      const latestProgress = await getHardwareScanProgress(activeJobId).catch(() => null);
+      setProgress(latestProgress);
+      await refreshDashboard();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Scan cancel failed");
+    } finally {
+      setCancelBusy(false);
     }
   }
 
@@ -623,6 +643,12 @@ export default function HardwareDashboardPage() {
               {busy || scanProgress.isScanning ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
               {runButtonLabel}
             </button>
+            {scanProgress.isScanning ? (
+              <button className="button secondary" onClick={stopCurrentScan} disabled={cancelBusy}>
+                {cancelBusy ? <Loader2 size={17} className="spin" /> : <Pause size={17} />}
+                {cancelBusy ? t("stoppingScan") : t("stopCurrentScan")}
+              </button>
+            ) : null}
             <button className="button secondary" onClick={refreshDashboard} disabled={busy}>
               <RefreshCw size={17} />
               {t("refresh")}
@@ -1922,8 +1948,8 @@ function buildReviewStats(needsReview: HardwareOpportunity[], history: HardwareO
 
 function buildLatestJobHealth(job: HardwareScanJob | null) {
   const runs = job?.source_runs ?? [];
-  const searching = runs.filter((run) => run.status === "searching" || run.status === "pending").length;
-  const completed = runs.filter((run) => run.status !== "searching" && run.status !== "pending").length;
+  const searching = runs.filter((run) => run.status === "searching" || run.status === "running").length;
+  const completed = runs.filter((run) => !["searching", "pending", "running"].includes(run.status)).length;
   const failed = runs.filter((run) => run.status === "failed" || run.status === "timeout" || run.status === "blocked").length;
   const updatedAtMs = job?.updated_at ? Date.parse(job.updated_at) : 0;
   const staleAgeMs = updatedAtMs ? Date.now() - updatedAtMs : 0;
@@ -2040,7 +2066,7 @@ function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCou
 function buildScanProgress(job: HardwareScanJob | null, progress: HardwareScanProgress | null) {
   const isScanning = job?.status === "created" || job?.status === "running";
   if (progress) {
-    const activeRun = progress.worker_runs.find((run) => run.status === "running" || run.status === "searching" || run.status === "pending");
+    const activeRun = progress.worker_runs.find((run) => run.status === "running" || run.status === "searching");
     const elapsedSeconds = job ? Math.max(0, Math.round((Date.now() - Date.parse(job.created_at)) / 1000)) : 0;
     return {
       isScanning,
@@ -2068,6 +2094,10 @@ function buildScanProgress(job: HardwareScanJob | null, progress: HardwareScanPr
     currentSource: activeRun?.source_name ?? lastRun?.source_name ?? "queued",
     elapsed: `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`,
   };
+}
+
+function isTerminalJobStatus(status?: HardwareScanJob["status"] | null) {
+  return Boolean(status && ["completed", "partially_completed", "failed", "cancelled"].includes(status));
 }
 
 function categoryLabel(category: HardwareCategory, t: (key: string) => string) {

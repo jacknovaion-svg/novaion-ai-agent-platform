@@ -57,6 +57,7 @@ class HardwareHunterDailyScheduler:
         self.scheduler_state = hardware_daily_store.scheduler_state
         self._active_tasks: set[UUID] = set()
         self._queued_tasks: set[UUID] = set()
+        self._cancelled_tasks: set[UUID] = set()
         self._disabled_sources: set[str] = set()
         self._loop_task: asyncio.Task | None = None
         self._store_write_lock = threading.RLock()
@@ -158,6 +159,31 @@ class HardwareHunterDailyScheduler:
         self._queued_tasks.remove(job_id)
         return True
 
+    def cancel_job(self, job_id: UUID) -> HardwareScanJob | None:
+        job = hardware_daily_store.get_job(job_id)
+        if not job:
+            return None
+        if job.status not in {HardwareScanJobStatus.CREATED, HardwareScanJobStatus.RUNNING}:
+            return job
+        self._cancelled_tasks.add(job_id)
+        now = utc_now()
+        job.status = HardwareScanJobStatus.CANCELLED
+        job.completed_at = now
+        job.error_message = "Scan stopped by user. Completed source runs were saved; unfinished workers were cancelled."
+        for run in job.source_runs:
+            if run.status in {HardwareSourceRunStatus.PENDING, HardwareSourceRunStatus.SEARCHING, HardwareSourceRunStatus.RUNNING}:
+                run.status = HardwareSourceRunStatus.CANCELLED
+                run.completed_at = now
+                run.error_message = "Source worker cancelled by user."
+        hardware_daily_store.update_job(job)
+        if self.scheduler_state.current_job_id == job_id:
+            self.scheduler_state.is_job_running = False
+            self.scheduler_state.current_job_id = None
+            self.scheduler_state.last_job_id = job_id
+            self.scheduler_state.last_run_at = now
+            hardware_daily_store.save_scheduler_state(self.scheduler_state)
+        return job
+
     async def run_job(self, job_id: UUID, request: HardwareScanRequest) -> None:
         job = hardware_daily_store.get_job(job_id)
         if not job:
@@ -188,9 +214,16 @@ class HardwareHunterDailyScheduler:
             if request.mode in {HardwareScanMode.ASSET_LISTING_SEARCH, HardwareScanMode.BOTH}:
                 raw_results = await self._run_asset_searches(job, request)
 
+            cancelled = self._is_cancelled(job_id)
+            if cancelled:
+                raw_results = [raw for raw in raw_results if raw.raw_data.get("source_run_id")]
+
             specific_raw_results = [raw for raw in raw_results if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING]
-            enriched_specific_results = await self._enrich_specific_listings(specific_raw_results)
-            raw_results = self._replace_enriched_results(raw_results, enriched_specific_results)
+            if cancelled:
+                enriched_specific_results = specific_raw_results
+            else:
+                enriched_specific_results = await self._enrich_specific_listings(specific_raw_results)
+                raw_results = self._replace_enriched_results(raw_results, enriched_specific_results)
             self._apply_state_matching(raw_results, job)
             stats = self._quality_stats(raw_results, job)
             eligible_specific_results = [
@@ -228,9 +261,13 @@ class HardwareHunterDailyScheduler:
             stats.final_opportunities = len(job.opportunities)
             stats.high_score_opportunities = len([item for item in job.opportunities if item.opportunity_score >= 60])
             job.quality_stats = stats
-            job.status = HardwareScanJobStatus.COMPLETED if job.opportunities else HardwareScanJobStatus.PARTIALLY_COMPLETED
-            report_action = "approve_and_send" if request.send_telegram else "preview"
-            job.report = await self.reporter.build_and_send(job, action=report_action)
+            if cancelled:
+                job.status = HardwareScanJobStatus.CANCELLED
+                job.error_message = "Scan stopped by user. Completed source runs were saved; cancelled source runs were skipped."
+            else:
+                job.status = HardwareScanJobStatus.COMPLETED if job.opportunities else HardwareScanJobStatus.PARTIALLY_COMPLETED
+                report_action = "approve_and_send" if request.send_telegram else "preview"
+                job.report = await self.reporter.build_and_send(job, action=report_action)
             job.completed_at = utc_now()
             await self._update_job_async(job)
             await self._save_scan_job_async(job)
@@ -249,6 +286,10 @@ class HardwareHunterDailyScheduler:
             self._refresh_next_run()
             await self._save_scheduler_state_async()
             self._active_tasks.discard(job_id)
+            self._cancelled_tasks.discard(job_id)
+
+    def _is_cancelled(self, job_id: UUID) -> bool:
+        return job_id in self._cancelled_tasks
 
     async def _update_job_async(self, job: HardwareScanJob) -> None:
         await asyncio.to_thread(self._update_job_sync, job)
@@ -311,8 +352,9 @@ class HardwareHunterDailyScheduler:
             HardwareSourceRunStatus.BLOCKED,
             HardwareSourceRunStatus.SKIPPED_CACHE,
             HardwareSourceRunStatus.DISABLED,
+            HardwareSourceRunStatus.CANCELLED,
         }
-        running = [run for run in executable_runs if run.status in {HardwareSourceRunStatus.SEARCHING, HardwareSourceRunStatus.RUNNING, HardwareSourceRunStatus.PENDING}]
+        running = [run for run in executable_runs if run.status in {HardwareSourceRunStatus.SEARCHING, HardwareSourceRunStatus.RUNNING}]
         durations = [run.duration_ms for run in executable_runs if run.duration_ms]
         avg_duration = int(sum(durations) / len(durations)) if durations else None
         remaining = max(0, len(executable_runs) - len([run for run in executable_runs if run.status in completed_statuses]))
@@ -598,98 +640,114 @@ class HardwareHunterDailyScheduler:
 
         async def run_query(query) -> list[RawHardwareListing]:
             timeout_seconds = self._query_timeout_seconds(query.scan_lane)
-            source_run = HardwareSourceRun(
-                source_name=query.source_group,
-                adapter_type=web_adapter.adapter_type,
-                query=query.generated_query_en,
-                expanded_query=query.generated_query_en,
-                query_template_id=query.query_template_id,
-                query_template=query.query_template,
-                state_code=query.state_code,
-                state_name=query.state_name,
-                scan_depth=query.scan_depth,
-                scan_lane=query.scan_lane,
-                category=query.category,
-                status=HardwareSourceRunStatus.RUNNING,
-                started_at=utc_now(),
-                timeout_seconds=timeout_seconds,
-            )
-            job.source_runs.append(source_run)
-            await self._update_job_async(job)
-            try:
-                if query.source_group in self._disabled_sources:
-                    source_run.status = HardwareSourceRunStatus.DISABLED
-                    source_run.error_message = "Source disabled by local operator."
-                    query.status = HardwareSourceRunStatus.DISABLED
+            if self._is_cancelled(job.id):
+                query.status = HardwareSourceRunStatus.CANCELLED
+                return []
+            async with semaphore:
+                if self._is_cancelled(job.id):
+                    query.status = HardwareSourceRunStatus.CANCELLED
                     return []
-                cache_key = self._query_cache_key(query)
-                ttl_minutes = self._cache_ttl_minutes(query.scan_lane)
-                cached_results = await self._get_query_cache_async(cache_key, ttl_minutes) if self.settings.hardware_query_cache_enabled else None
-                if cached_results is not None:
-                    results = self._hydrate_cached_results(cached_results)
+                source_run = HardwareSourceRun(
+                    source_name=query.source_group,
+                    adapter_type=web_adapter.adapter_type,
+                    query=query.generated_query_en,
+                    expanded_query=query.generated_query_en,
+                    query_template_id=query.query_template_id,
+                    query_template=query.query_template,
+                    state_code=query.state_code,
+                    state_name=query.state_name,
+                    scan_depth=query.scan_depth,
+                    scan_lane=query.scan_lane,
+                    category=query.category,
+                    status=HardwareSourceRunStatus.RUNNING,
+                    started_at=utc_now(),
+                    timeout_seconds=timeout_seconds,
+                )
+                job.source_runs.append(source_run)
+                await self._update_job_async(job)
+                try:
+                    if self._is_cancelled(job.id):
+                        source_run.status = HardwareSourceRunStatus.CANCELLED
+                        source_run.error_message = "Source worker cancelled before execution."
+                        query.status = HardwareSourceRunStatus.CANCELLED
+                        return []
+                    if query.source_group in self._disabled_sources:
+                        source_run.status = HardwareSourceRunStatus.DISABLED
+                        source_run.error_message = "Source disabled by local operator."
+                        query.status = HardwareSourceRunStatus.DISABLED
+                        return []
+                    cache_key = self._query_cache_key(query)
+                    ttl_minutes = self._cache_ttl_minutes(query.scan_lane)
+                    cached_results = await self._get_query_cache_async(cache_key, ttl_minutes) if self.settings.hardware_query_cache_enabled else None
+                    if cached_results is not None:
+                        results = self._hydrate_cached_results(cached_results)
+                        for result in results:
+                            result.raw_data["source_run_id"] = str(source_run.id)
+                            result.raw_data["cache_hit"] = True
+                        source_run.status = HardwareSourceRunStatus.SKIPPED_CACHE
+                        source_run.cache_hit = True
+                        source_run.result_count = len(results)
+                        source_run.raw_results = len(results)
+                        source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
+                        query.status = HardwareSourceRunStatus.SKIPPED_CACHE
+                        query.result_count = len(results)
+                        query.specific_listing_count = source_run.specific_listing_count
+                        return results
+                    results = await asyncio.wait_for(web_adapter.search(query, request), timeout=timeout_seconds)
+                    if self._is_cancelled(job.id):
+                        source_run.status = HardwareSourceRunStatus.CANCELLED
+                        source_run.error_message = "Source worker result discarded because scan was stopped by user."
+                        query.status = HardwareSourceRunStatus.CANCELLED
+                        return []
                     for result in results:
                         result.raw_data["source_run_id"] = str(source_run.id)
-                        result.raw_data["cache_hit"] = True
-                    source_run.status = HardwareSourceRunStatus.SKIPPED_CACHE
-                    source_run.cache_hit = True
+                        result.raw_data["requested_state"] = query.state_code
+                        result.raw_data["requested_states"] = [query.state_code] if query.state_code else []
+                        result.requested_states = [query.state_code] if query.state_code else []
+                    if self.settings.hardware_query_cache_enabled:
+                        await self._set_query_cache_async(
+                            cache_key,
+                            {
+                                "source_name": query.source_group,
+                                "category": query.category.value,
+                                "state_code": query.state_code,
+                                "query_normalized": self._normalize_query_key(query.generated_query_en),
+                                "scan_depth": query.scan_depth.value,
+                                "scan_lane": query.scan_lane.value,
+                                "raw_results": self._serialize_raw_results(results),
+                                "result_count": len(results),
+                                "expires_at": utc_now() + timedelta(minutes=ttl_minutes),
+                            },
+                        )
+                    source_run.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
                     source_run.result_count = len(results)
                     source_run.raw_results = len(results)
                     source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
-                    query.status = HardwareSourceRunStatus.SKIPPED_CACHE
+                    source_run.zero_result_reason = self._zero_result_reason(source_run, results)
+                    query.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
                     query.result_count = len(results)
                     query.specific_listing_count = source_run.specific_listing_count
+                    query.zero_result_reason = source_run.zero_result_reason
                     return results
-                async with semaphore:
-                    results = await asyncio.wait_for(web_adapter.search(query, request), timeout=timeout_seconds)
-                for result in results:
-                    result.raw_data["source_run_id"] = str(source_run.id)
-                    result.raw_data["requested_state"] = query.state_code
-                    result.raw_data["requested_states"] = [query.state_code] if query.state_code else []
-                    result.requested_states = [query.state_code] if query.state_code else []
-                if self.settings.hardware_query_cache_enabled:
-                    await self._set_query_cache_async(
-                        cache_key,
-                        {
-                            "source_name": query.source_group,
-                            "category": query.category.value,
-                            "state_code": query.state_code,
-                            "query_normalized": self._normalize_query_key(query.generated_query_en),
-                            "scan_depth": query.scan_depth.value,
-                            "scan_lane": query.scan_lane.value,
-                            "raw_results": self._serialize_raw_results(results),
-                            "result_count": len(results),
-                            "expires_at": utc_now() + timedelta(minutes=ttl_minutes),
-                        },
-                    )
-                source_run.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
-                source_run.result_count = len(results)
-                source_run.raw_results = len(results)
-                source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
-                source_run.zero_result_reason = self._zero_result_reason(source_run, results)
-                query.status = HardwareSourceRunStatus.SUCCESS if results else HardwareSourceRunStatus.ZERO_RESULTS
-                query.result_count = len(results)
-                query.specific_listing_count = source_run.specific_listing_count
-                query.zero_result_reason = source_run.zero_result_reason
-                return results
-            except asyncio.TimeoutError:
-                source_run.status = HardwareSourceRunStatus.TIMEOUT
-                source_run.error_message = "Source timed out without blocking the scan."
-                source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_TIMEOUT
-                query.status = HardwareSourceRunStatus.TIMEOUT
-                query.zero_result_reason = source_run.zero_result_reason
-                return []
-            except Exception as exc:
-                source_run.status = self._status_from_exception(exc)
-                source_run.error_message = str(exc)[:500]
-                source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_BLOCKED if source_run.status == HardwareSourceRunStatus.BLOCKED else HardwareZeroResultReason.UNKNOWN
-                query.status = source_run.status
-                query.zero_result_reason = source_run.zero_result_reason
-                return []
-            finally:
-                source_run.completed_at = utc_now()
-                if source_run.started_at:
-                    source_run.duration_ms = max(0, int((source_run.completed_at - source_run.started_at).total_seconds() * 1000))
-                await self._update_job_async(job)
+                except asyncio.TimeoutError:
+                    source_run.status = HardwareSourceRunStatus.TIMEOUT
+                    source_run.error_message = "Source timed out without blocking the scan."
+                    source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_TIMEOUT
+                    query.status = HardwareSourceRunStatus.TIMEOUT
+                    query.zero_result_reason = source_run.zero_result_reason
+                    return []
+                except Exception as exc:
+                    source_run.status = self._status_from_exception(exc)
+                    source_run.error_message = str(exc)[:500]
+                    source_run.zero_result_reason = HardwareZeroResultReason.SOURCE_BLOCKED if source_run.status == HardwareSourceRunStatus.BLOCKED else HardwareZeroResultReason.UNKNOWN
+                    query.status = source_run.status
+                    query.zero_result_reason = source_run.zero_result_reason
+                    return []
+                finally:
+                    source_run.completed_at = utc_now()
+                    if source_run.started_at:
+                        source_run.duration_ms = max(0, int((source_run.completed_at - source_run.started_at).total_seconds() * 1000))
+                    await self._update_job_async(job)
 
         for planned in planned_queries:
             job.source_runs.append(

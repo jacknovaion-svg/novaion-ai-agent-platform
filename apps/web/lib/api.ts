@@ -260,6 +260,12 @@ export async function getHardwareDailyScanJob(jobId: string): Promise<HardwareSc
   return response.json();
 }
 
+export async function cancelHardwareDailyScan(jobId: string): Promise<HardwareScanJob> {
+  const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/jobs/${jobId}/cancel`, { method: "POST" });
+  if (!response.ok) throw new Error("Hardware daily scan cancel failed");
+  return response.json();
+}
+
 export async function getHardwareDashboard(): Promise<HardwareDashboard> {
   const response = await fetch(`${API_BASE}/hardware-hunter/daily-scan/dashboard`, { cache: "no-store" });
   if (!response.ok) throw new Error("Hardware dashboard failed");

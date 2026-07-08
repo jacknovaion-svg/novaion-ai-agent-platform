@@ -192,7 +192,7 @@ export interface SupplierSearchJob {
   completed_at?: string | null;
 }
 
-export type HardwareScanJobStatus = "created" | "running" | "partially_completed" | "completed" | "failed";
+export type HardwareScanJobStatus = "created" | "running" | "partially_completed" | "completed" | "failed" | "cancelled";
 export type HardwareSourceRunStatus =
   | "pending"
   | "searching"
@@ -204,7 +204,8 @@ export type HardwareSourceRunStatus =
   | "blocked"
   | "skipped_cache"
   | "disabled"
-  | "planned";
+  | "planned"
+  | "cancelled";
 export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" | "both";
 export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu" | "networking" | "computers_it";
 export type HardwareScanDepth = "quick" | "standard" | "deep";
