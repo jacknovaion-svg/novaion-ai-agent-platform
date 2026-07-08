@@ -210,6 +210,7 @@ export type HardwareScanMode = "asset_listing_search" | "supplier_lead_search" |
 export type HardwareCategory = "servers" | "gpu" | "memory" | "storage" | "cpu" | "networking" | "computers_it";
 export type HardwareScanDepth = "quick" | "standard" | "deep";
 export type HardwareScanLane = "fast" | "deep";
+export type HardwareScanScope = "nationwide" | "legacy_state";
 export type HardwareCondition =
   | "new"
   | "open_box"
@@ -325,6 +326,7 @@ export interface HardwareOpportunity {
   location_city?: string | null;
   location_state?: string | null;
   zip_code?: string | null;
+  location_text?: string | null;
   requested_states?: string[];
   detected_state?: string | null;
   matched_requested_state?: string | null;
@@ -403,6 +405,8 @@ export interface HardwareOpportunity {
   source_url: string;
   canonical_url?: string | null;
   source_listing_id?: string | null;
+  external_id?: string | null;
+  matched_keywords?: string[];
   page_type: HardwareResultPageType;
   classification_reason?: string | null;
   first_seen_at: string;
@@ -512,6 +516,7 @@ export interface HardwareScanJob {
   status: HardwareScanJobStatus;
   categories: HardwareCategory[];
   states: string[];
+  scan_scope?: HardwareScanScope;
   scan_lane?: HardwareScanLane;
   generated_queries: HardwareGeneratedQuery[];
   source_runs: HardwareSourceRun[];

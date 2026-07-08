@@ -165,6 +165,8 @@ class HardwareDailyPersistence:
                     current.last_seen_job_id = scan_job_id or previous.last_seen_job_id
                     current.last_updated_job_id = previous.last_updated_job_id
                     current.last_seen_at = utc_now()
+                    current.matched_keywords = self._merge_keywords(previous, current)
+                    current.raw_data_json["matched_keywords"] = current.matched_keywords
                     if changes:
                         current.last_changed_at = utc_now()
                         current.last_updated_job_id = scan_job_id or previous.last_updated_job_id
@@ -460,24 +462,28 @@ class HardwareDailyPersistence:
 
     def identity_key(self, opportunity: HardwareOpportunity) -> str:
         source = self._norm(opportunity.source)
-        if opportunity.source_listing_id:
-            return f"{source}:listing:{self._norm(opportunity.source_listing_id)}"
+        external_id = opportunity.external_id or opportunity.source_listing_id
+        if external_id:
+            return f"{source}:listing:{self._norm(external_id)}"
         if opportunity.lot_number:
             return f"{source}:lot:{self._norm(opportunity.lot_number)}"
-        canonical_url = opportunity.canonical_url or opportunity.source_url
-        if canonical_url:
-            return f"url:{self._normalize_url(canonical_url)}"
+        end_time = opportunity.end_time_utc or opportunity.auction_end_time or opportunity.calculated_end_time
         text_key = "|".join(
             self._norm(part)
             for part in [
+                opportunity.source,
                 opportunity.title,
-                opportunity.seller_name or "",
+                opportunity.location_text or "",
                 opportunity.location_city or "",
                 opportunity.location_state or "",
+                end_time.isoformat() if end_time else "",
             ]
             if part
         )
         return f"text:{text_key}"
+
+    def _merge_keywords(self, previous: HardwareOpportunity, current: HardwareOpportunity) -> list[str]:
+        return list(dict.fromkeys([*(previous.matched_keywords or []), *(current.matched_keywords or [])]))
 
     def _run_migrations(self) -> None:
         if not self.engine:

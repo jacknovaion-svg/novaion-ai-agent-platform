@@ -43,6 +43,7 @@ type ResultScope = "current_scan" | "all_current" | "selected_states";
 type RegionStrategy = "all_us" | "priority_states" | "rotating_states" | "custom_states";
 type ScanDepth = "quick" | "standard" | "deep";
 type ScanLane = "fast" | "deep";
+type ScanScope = "nationwide" | "legacy_state";
 type ScanPreset =
   | "full_hardware_scan"
   | "servers_only"
@@ -66,7 +67,7 @@ type ReviewFormPayload = {
   review_notes: string;
 };
 
-const sourceCount = 3;
+const sourceCount = 4;
 const scanDepthQueryCounts: Record<ScanDepth, number> = {
   quick: 2,
   standard: 5,
@@ -143,6 +144,7 @@ export default function HardwareDashboardPage() {
   const [selectedStates, setSelectedStates] = useState<string[]>(defaultStates);
   const [stateDraft, setStateDraft] = useState("");
   const [regionStrategy, setRegionStrategy] = useState<RegionStrategy>("priority_states");
+  const [scanScope, setScanScope] = useState<ScanScope>("nationwide");
   const [scanPreset, setScanPreset] = useState<ScanPreset>("servers_only");
   const [scanMode, setScanMode] = useState<DashboardScanMode>("asset_listing_search");
   const [scanDepth, setScanDepth] = useState<ScanDepth>("standard");
@@ -237,12 +239,12 @@ export default function HardwareDashboardPage() {
   const scanProgress = useMemo(() => buildScanProgress(job, progress), [job, progress]);
   const latestJobHealth = useMemo(() => buildLatestJobHealth(latestJob), [latestJob]);
   const coverageLabel = useMemo(
-    () => regionStrategy === "all_us" ? t("coverageAllUs").replace("Coverage: ", "").replace("覆盖范围：", "") : selectedStates.join(", "),
-    [regionStrategy, selectedStates, t],
+    () => scanScope === "nationwide" ? t("nationwideKeywordScan") : regionStrategy === "all_us" ? t("coverageAllUs").replace("Coverage: ", "").replace("覆盖范围：", "") : selectedStates.join(", "),
+    [regionStrategy, scanScope, selectedStates, t],
   );
   const estimatedTasks = useMemo(
-    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane),
-    [regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane],
+    () => estimateTasks(regionStrategy, selectedStates.length, selectedCategories.length, scanDepth, scanLane, scanScope),
+    [regionStrategy, scanScope, selectedStates.length, selectedCategories.length, scanDepth, scanLane],
   );
   const activeSourceCount = scanLane === "fast" ? sourceCount : 0;
   const runButtonLabel = useMemo(() => {
@@ -280,10 +282,12 @@ export default function HardwareDashboardPage() {
     setBusy(true);
     setError(null);
     try {
+      const requestStates = scanScope === "legacy_state" && regionStrategy !== "all_us" ? selectedStates : [];
       const created = await runHardwareDailyScan({
         mode: scanMode,
         categories: selectedCategories,
-        states: regionStrategy === "all_us" ? [] : selectedStates,
+        states: requestStates,
+        scan_scope: scanScope,
         test_run: true,
         max_results_per_query: 3,
         max_queries_per_category: scanDepthQueryCounts[scanDepth],
@@ -294,7 +298,7 @@ export default function HardwareDashboardPage() {
       setJob(created);
       setProgress(null);
       setResultScope("current_scan");
-      const requestedStates = regionStrategy === "all_us" ? [] : selectedStates;
+      const requestedStates = requestStates;
       setStateFilter(requestedStates.length === 1 ? requestedStates[0] : "all");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed");
@@ -544,6 +548,18 @@ export default function HardwareDashboardPage() {
 
         <div className="scan-config-row">
           <label className="field compact-field">
+            <span>{t("scanScope")}</span>
+            <select className="select" value={scanScope} onChange={(event) => { setScanScope(event.target.value as ScanScope); setScanPreset("custom"); }}>
+              <option value="nationwide">{t("nationwideKeywordScan")}</option>
+              <option value="legacy_state">{t("legacyStateScan")}</option>
+            </select>
+            <small className="strategy-help">
+              {scanScope === "nationwide" ? t("locationFilterOnly") : regionStrategyDescription(regionStrategy, t)}
+            </small>
+          </label>
+
+          {scanScope === "legacy_state" ? (
+          <label className="field compact-field">
             <span>{t("regionStrategy")}</span>
             <select className="select" value={regionStrategy} onChange={(event) => { setRegionStrategy(event.target.value as RegionStrategy); setScanPreset("custom"); }}>
               {(["all_us", "priority_states", "rotating_states", "custom_states"] as RegionStrategy[]).map((value) => (
@@ -552,7 +568,9 @@ export default function HardwareDashboardPage() {
             </select>
             <small className="strategy-help">{regionStrategyDescription(regionStrategy, t)}</small>
           </label>
+          ) : null}
 
+          {scanScope === "legacy_state" ? (
           <div className="field compact-field state-picker">
             <span>{t("states")}</span>
             {regionStrategy === "all_us" ? (
@@ -586,6 +604,7 @@ export default function HardwareDashboardPage() {
               </>
             )}
           </div>
+          ) : null}
 
           <label className="field compact-field">
             <span>{t("scanMode")}</span>
@@ -660,7 +679,7 @@ export default function HardwareDashboardPage() {
               {coverageLabel || t("noData")} · {selectedCategories.length} {t("categories")} · {activeSourceCount} {t("sources")} · {estimatedTasks} {t("tasks")}
             </div>
             <div className="scan-summary">
-              {t("queryPreview")}: {activeSourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × {regionStrategy === "all_us" ? 1 : Math.max(selectedStates.length, 1)} {t("states")} × {scanDepthQueryCounts[scanDepth]} queries = {estimatedTasks} {t("tasks")}
+              {t("queryPreview")}: {activeSourceCount} {t("sources")} × {selectedCategories.length} {t("categories")} × up to {scanDepthQueryCounts[scanDepth]} keywords = {estimatedTasks} {t("tasks")}
               {estimatedTasks >= 100 ? ` · ${t("largeScanWarning")}` : ""}
             </div>
             {scanProgress.isScanning ? (
@@ -737,7 +756,7 @@ export default function HardwareDashboardPage() {
             <h2>{resultScopeTitle(resultScope, t)}</h2>
             <p className="muted">
               {resultScope === "current_scan"
-                ? `${t("scanJob")}: ${latestJobId ?? t("none")} · ${t("scannedStates")}: ${(latestJob?.states ?? []).join(", ") || t("allUnknown")} · ${t("scanTime")}: ${latestJob?.created_at ? new Date(latestJob.created_at).toLocaleString() : t("none")}`
+                ? `${t("scanJob")}: ${latestJobId ?? t("none")} · ${t("scanScopeLabel")}: ${latestJob?.scan_scope === "legacy_state" ? t("legacyStateScan") : t("nationwideKeywordScan")} · ${t("sourcesScanned")}: ${uniqueSourceCount(latestJob?.source_runs ?? [])} · ${t("keywordsScanned")}: ${latestJob?.generated_queries?.filter((query) => query.status !== "planned").length ?? 0} · ${t("lastScanTime")}: ${latestJob?.created_at ? new Date(latestJob.created_at).toLocaleString() : t("none")}`
                 : resultScope === "all_current"
                   ? t("showingAllCurrent")
                   : t("showingSelectedStates")}
@@ -748,7 +767,6 @@ export default function HardwareDashboardPage() {
               className={`button secondary ${resultScope === "current_scan" ? "active" : ""}`}
               onClick={() => {
                 setResultScope("current_scan");
-                if ((latestJob?.states ?? []).length === 1) setStateFilter(latestJob?.states[0] ?? "all");
               }}
             >
               {t("currentScan")}
@@ -1058,6 +1076,7 @@ function OpportunityTable({
             <th>{t("currentPrice")}</th>
             <th>{t("unitCost")}</th>
             <th>{t("location")}</th>
+            <th>{t("matchedKeywords")}</th>
             <th>{t("completeness")}</th>
             <th>{t("status")}</th>
             <th>{t("verification")}</th>
@@ -1083,7 +1102,8 @@ function OpportunityTable({
               <td>{item.quantity ?? <span className="muted">{t("unknown")}</span>}</td>
               <td>{formatMoney(item.current_total_cost ?? item.total_price, t)}</td>
               <td>{formatMoney(item.cost_per_unit ?? item.unit_price, t)}</td>
-              <td>{[item.location_city, detectedState(item)].filter(Boolean).join(", ") || <span className="muted">{t("unknown")}</span>}</td>
+              <td>{opportunityLocation(item) || <span className="muted">{t("unknown")}</span>}</td>
+              <td>{matchedKeywords(item).slice(0, 4).join(", ") || <span className="muted">{t("unknown")}</span>}</td>
               <td><span className="pill">{completenessLabel(item.component_completeness, t)}</span></td>
               <td><span className="pill">{statusLabel(item.listing_status, t)}</span></td>
               <td>{verificationBadge(item, t)}</td>
@@ -1411,6 +1431,10 @@ function buildSourceQualityStats(sourceRuns: HardwareSourceRun[]) {
   return [...bySource.values()].sort((a, b) => a.source.localeCompare(b.source));
 }
 
+function uniqueSourceCount(sourceRuns: HardwareSourceRun[]) {
+  return new Set(sourceRuns.filter((run) => run.status !== "planned").map((run) => run.source_name)).size;
+}
+
 function OpportunityDrawer({
   opportunity,
   onClose,
@@ -1458,7 +1482,8 @@ function OpportunityDrawer({
             <Detail label="Buyer Premium" value={opportunity.buyer_premium} />
             <Detail label="Condition" value={opportunity.condition} />
             <Detail label="Completeness" value={opportunity.component_completeness} />
-            <Detail label="Location" value={[opportunity.location_city, opportunity.location_state].filter(Boolean).join(", ")} />
+            <Detail label="Location" value={opportunityLocation(opportunity)} />
+            <Detail label="Matched Keywords" value={matchedKeywords(opportunity).join(", ")} />
             <Detail label="End Time" value={formatEndTime(opportunity)} />
             <Detail label="User Time" value={formatDate(opportunity.end_time_user_timezone)} />
             <Detail label="Time Left" value={opportunity.time_remaining} />
@@ -1761,6 +1786,17 @@ function detectedState(item: HardwareOpportunity) {
   return item.detected_state || rawDetected || item.location_state || null;
 }
 
+function opportunityLocation(item: HardwareOpportunity) {
+  const rawLocation = typeof item.raw_data_json?.location_text === "string" ? item.raw_data_json.location_text : null;
+  return item.location_text || rawLocation || [item.location_city, detectedState(item), item.zip_code].filter(Boolean).join(", ");
+}
+
+function matchedKeywords(item: HardwareOpportunity) {
+  const rawKeywords = item.raw_data_json?.matched_keywords;
+  const values = item.matched_keywords ?? (Array.isArray(rawKeywords) ? rawKeywords.map(String) : []);
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 function normalizeStateCode(value?: string | null) {
   if (!value) return "";
   return stateLookup.get(value.trim().toLowerCase()) ?? value.trim().toUpperCase();
@@ -2057,10 +2093,12 @@ function normalizeState(input: string) {
   return stateLookup.get(key) ?? null;
 }
 
-function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth, scanLane: ScanLane) {
+function estimateTasks(strategy: RegionStrategy, stateCount: number, categoryCount: number, scanDepth: ScanDepth, scanLane: ScanLane, scanScope: ScanScope) {
   if (scanLane === "deep") return 0;
-  const regionFactor = strategy === "all_us" ? 1 : Math.max(stateCount, 1);
-  return regionFactor * categoryCount * sourceCount * scanDepthQueryCounts[scanDepth];
+  const regionFactor = scanScope === "nationwide" || strategy === "all_us" ? 1 : Math.max(stateCount, 1);
+  const queryCount = scanDepthQueryCounts[scanDepth];
+  const fastSourceQueries = queryCount * 3 + Math.min(queryCount, 3);
+  return regionFactor * categoryCount * fastSourceQueries;
 }
 
 function buildScanProgress(job: HardwareScanJob | null, progress: HardwareScanProgress | null) {

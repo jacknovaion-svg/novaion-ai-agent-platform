@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, HardwareScanDepth, HardwareScanLane
+from app.hardware_daily.models import HardwareCategory, HardwareGeneratedQuery, HardwareScanDepth, HardwareScanLane, HardwareScanScope
 
 
 ACTIVE_SOURCE_DOMAINS = {
@@ -92,7 +92,26 @@ SOURCE_CONFIGS = {
 
 CATEGORY_TERMS: dict[HardwareCategory, list[str]] = {
     HardwareCategory.SERVERS: [
+        "server",
+        "servers",
+        "supermicro",
+        "poweredge",
         "Dell PowerEdge",
+        "rack server",
+        "rack servers",
+        "gpu server",
+        "gpu servers",
+        "ai server",
+        "ai servers",
+        "blade server",
+        "storage server",
+        "compute server",
+        "enterprise server",
+        "dell server",
+        "hpe server",
+        "hp proliant",
+        "lenovo thinksystem",
+        "cisco ucs",
         "HPE ProLiant",
         "Supermicro server",
         "Lenovo ThinkSystem",
@@ -104,6 +123,17 @@ CATEGORY_TERMS: dict[HardwareCategory, list[str]] = {
         "data center equipment",
     ],
     HardwareCategory.GPU: [
+        "gpu",
+        "gpus",
+        "nvidia",
+        "rtx",
+        "a6000",
+        "a5000",
+        "a100",
+        "h100",
+        "h200",
+        "b200",
+        "b300",
         "NVIDIA GPU",
         "Tesla GPU",
         "NVIDIA A100",
@@ -117,6 +147,10 @@ CATEGORY_TERMS: dict[HardwareCategory, list[str]] = {
         "accelerator card",
     ],
     HardwareCategory.MEMORY: [
+        "memory",
+        "ddr4",
+        "ddr5",
+        "ecc memory",
         "DDR4 ECC",
         "DDR5 ECC",
         "RDIMM",
@@ -128,6 +162,9 @@ CATEGORY_TERMS: dict[HardwareCategory, list[str]] = {
         "64GB server memory",
     ],
     HardwareCategory.STORAGE: [
+        "ssd",
+        "nvme",
+        "hard drive",
         "enterprise SSD",
         "NVMe SSD",
         "U.2 NVMe",
@@ -224,9 +261,10 @@ class HardwareSearchQueryBuilder:
         max_queries_per_category: int = 8,
         scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD,
         scan_lane: HardwareScanLane = HardwareScanLane.FAST,
+        scan_scope: HardwareScanScope = HardwareScanScope.NATIONWIDE,
     ) -> list[HardwareGeneratedQuery]:
         selected_categories = categories or list(HardwareCategory)
-        state_targets = self._state_targets(states or [])
+        state_targets = self._state_targets(states or []) if scan_scope == HardwareScanScope.LEGACY_STATE else self._state_targets([])
         query_limit = min(max_queries_per_category, SCAN_DEPTH_LIMITS.get(scan_depth, 5))
         queries: list[HardwareGeneratedQuery] = []
         seen: set[str] = set()
@@ -243,7 +281,7 @@ class HardwareSearchQueryBuilder:
                 for target in state_targets:
                     for index, term in enumerate(category_terms[:source_query_limit], start=1):
                         query = self._build_source_query(source_name, domain, term, target["location_phrase"])
-                        dedupe_key = self._dedupe_key(source_name, category.value, term, target["state_code"], query)
+                        dedupe_key = self._dedupe_key(source_name, category.value, term, target["state_code"] if scan_scope == HardwareScanScope.LEGACY_STATE else None, query)
                         if dedupe_key in seen:
                             continue
                         seen.add(dedupe_key)
@@ -254,9 +292,9 @@ class HardwareSearchQueryBuilder:
                                 generated_query_en=query,
                                 query_template_id=f"{source_name.lower().replace(' ', '_')}:{category.value}:{index}",
                                 query_template=term,
-                                state_code=target["state_code"],
-                                state_name=target["state_name"],
-                                location_phrase=target["location_phrase"],
+                                state_code=target["state_code"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
+                                state_name=target["state_name"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
+                                location_phrase=target["location_phrase"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
                                 scan_depth=scan_depth,
                                 scan_lane=scan_lane,
                             )
@@ -268,9 +306,10 @@ class HardwareSearchQueryBuilder:
         categories: list[HardwareCategory] | None = None,
         states: list[str] | None = None,
         scan_depth: HardwareScanDepth = HardwareScanDepth.STANDARD,
+        scan_scope: HardwareScanScope = HardwareScanScope.NATIONWIDE,
     ) -> list[HardwareGeneratedQuery]:
         selected_categories = categories or list(HardwareCategory)
-        state_targets = self._state_targets(states or [])
+        state_targets = self._state_targets(states or []) if scan_scope == HardwareScanScope.LEGACY_STATE else self._state_targets([])
         queries: list[HardwareGeneratedQuery] = []
         for category in selected_categories:
             term = CATEGORY_TERMS[category][0]
@@ -284,9 +323,9 @@ class HardwareSearchQueryBuilder:
                         generated_query_en=query,
                         query_template_id=f"{source_name.lower().replace(' ', '_')}:planned:{category.value}",
                         query_template=term,
-                        state_code=target["state_code"],
-                        state_name=target["state_name"],
-                        location_phrase=target["location_phrase"],
+                        state_code=target["state_code"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
+                        state_name=target["state_name"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
+                        location_phrase=target["location_phrase"] if scan_scope == HardwareScanScope.LEGACY_STATE else None,
                         scan_depth=scan_depth,
                         scan_lane=HardwareScanLane.DEEP,
                         status="planned",

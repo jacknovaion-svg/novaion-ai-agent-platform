@@ -26,6 +26,7 @@ from app.hardware_daily.models import (
     HardwareScanLane,
     HardwareScanMode,
     HardwareScanRequest,
+    HardwareScanScope,
     HardwareSourceRun,
     HardwareSourceHealth,
     HardwareSourceHealthStatus,
@@ -145,7 +146,8 @@ class HardwareHunterDailyScheduler:
             if running_job:
                 return running_job
         categories = request.categories or list(HardwareCategory)
-        job = HardwareScanJob(mode=request.mode, categories=categories, states=request.states, scan_lane=request.scan_lane)
+        job_states = request.states if request.scan_scope == HardwareScanScope.LEGACY_STATE else []
+        job = HardwareScanJob(mode=request.mode, categories=categories, states=job_states, scan_scope=request.scan_scope, scan_lane=request.scan_lane)
         hardware_daily_store.create_job(job)
         self._queued_tasks.add(job.id)
         self.scheduler_state.is_job_running = True
@@ -199,6 +201,7 @@ class HardwareHunterDailyScheduler:
                 max_queries_per_category=request.max_queries_per_category,
                 scan_depth=request.scan_depth,
                 scan_lane=request.scan_lane,
+                scan_scope=request.scan_scope,
             )
             if request.scan_lane == HardwareScanLane.FAST:
                 job.generated_queries.extend(
@@ -206,6 +209,7 @@ class HardwareHunterDailyScheduler:
                         categories=job.categories,
                         states=job.states,
                         scan_depth=request.scan_depth,
+                        scan_scope=request.scan_scope,
                     )
                 )
             await self._update_job_async(job)
@@ -230,7 +234,7 @@ class HardwareHunterDailyScheduler:
                 raw
                 for raw in raw_results
                 if raw.page_type == HardwareResultPageType.SPECIFIC_LISTING
-                and raw.raw_data.get("state_match_status") != "mismatched"
+                and (job.scan_scope != HardwareScanScope.LEGACY_STATE or raw.raw_data.get("state_match_status") != "mismatched")
             ]
             normalized = [listing_status_recheck_service._apply_status_rules(self.normalizer.normalize(raw)) for raw in eligible_specific_results]
             deduped, duplicates_removed = self._dedupe(normalized)
@@ -703,6 +707,8 @@ class HardwareHunterDailyScheduler:
                         result.raw_data["source_run_id"] = str(source_run.id)
                         result.raw_data["requested_state"] = query.state_code
                         result.raw_data["requested_states"] = [query.state_code] if query.state_code else []
+                        result.raw_data["matched_keywords"] = [query.query_template] if query.query_template else []
+                        result.raw_data["scan_scope"] = job.scan_scope.value
                         result.requested_states = [query.state_code] if query.state_code else []
                     if self.settings.hardware_query_cache_enabled:
                         await self._set_query_cache_async(
@@ -825,7 +831,7 @@ class HardwareHunterDailyScheduler:
         return [by_url.get(raw.source_url, raw) for raw in raw_results]
 
     def _apply_state_matching(self, raw_results: list[RawHardwareListing], job: HardwareScanJob) -> None:
-        fallback_states = job.states or []
+        fallback_states = job.states if job.scan_scope == HardwareScanScope.LEGACY_STATE else []
         run_stats: dict[str, dict[str, object]] = {}
         for raw in raw_results:
             match = hardware_state_matcher.apply(raw, fallback_requested_states=fallback_states)
@@ -1059,7 +1065,8 @@ class HardwareHunterDailyScheduler:
             [
                 query.source_group,
                 query.category.value,
-                query.state_code or "all",
+                query.state_code or "nationwide",
+                query.query_template or "",
                 self._normalize_query_key(query.generated_query_en),
                 query.scan_depth.value,
                 query.scan_lane.value,

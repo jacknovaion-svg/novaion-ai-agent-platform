@@ -115,19 +115,22 @@ class TelegramHardwareDailyReporter:
             if self._eligible_for_top_report(item)
         ]
         for index, item in enumerate(current_opportunities[:8], start=1):
-            price = f"${item.current_total_cost or item.total_price:,.0f}" if item.current_total_cost or item.total_price else "价格 unknown"
-            unit = f"${item.cost_per_unit:,.2f}/unit" if item.cost_per_unit else "单件成本 unknown"
-            model = item.model or "型号 unknown"
-            location = ", ".join(part for part in [item.location_city, item.location_state] if part) or "地点 unknown"
-            risk = ", ".join((item.recommendation_reasons or [])[:4]) or "needs_manual_review"
+            price = f"${item.current_total_cost or item.total_price or item.current_price:,.0f}" if item.current_total_cost or item.total_price or item.current_price else "unknown"
+            location = item.location_text or ", ".join(part for part in [item.location_city, item.location_state] if part) or "unknown"
+            keywords = ", ".join(self._matched_keywords(item)[:6]) or "unknown"
+            end_time = item.end_time_raw or (item.end_time_utc.isoformat() if item.end_time_utc else item.time_remaining) or "unknown"
             lines.extend(
                 [
-                    f"{index}. [{item.category.value}] {item.title[:96]}",
-                    f"   型号: {model} | 数量: {item.quantity or 'unknown'} | 总价: {price} | {unit}",
-                    f"   地点: {location} | 剩余时间: {item.time_remaining or 'unknown'} | 完整度: {item.component_completeness.value}",
-                    f"   状态: {item.listing_status.value} | 建议: {item.recommendation.value} | 风险: {risk}",
-                    f"   分数: {item.opportunity_score:.0f}/100 | 风险分: {item.risk_score:.0f}/100 | 来源: {item.source}",
-                    f"   链接: {item.source_url}",
+                    "🔥 Hardware Opportunity",
+                    f"Title: {item.title[:140]}",
+                    f"Source: {item.source}",
+                    f"Location: {location}",
+                    f"Ends: {end_time}",
+                    f"Quantity: {item.quantity or 'unknown'}",
+                    f"Current Bid: {price}",
+                    f"AI Score: {item.opportunity_score:.0f}/100",
+                    f"Matched Keywords: {keywords}",
+                    f"URL: {item.source_url}",
                 ]
             )
         if not current_opportunities:
@@ -139,6 +142,12 @@ class TelegramHardwareDailyReporter:
             ]
         )
         return "\n".join(lines)
+
+    def _matched_keywords(self, item) -> list[str]:
+        values = item.matched_keywords or item.raw_data_json.get("matched_keywords") or []
+        if isinstance(values, str):
+            values = [values]
+        return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
     def _eligible_for_top_report(self, item) -> bool:
         if self._has_review_blocker(item) or self._has_past_end_time(item):

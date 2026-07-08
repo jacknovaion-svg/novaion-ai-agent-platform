@@ -234,6 +234,7 @@ export type HardwareDailyScanPayload = {
   mode: "asset_listing_search" | "supplier_lead_search" | "both";
   categories: HardwareCategory[];
   states: string[];
+  scan_scope?: "nationwide" | "legacy_state";
   test_run: boolean;
   max_results_per_query: number;
   max_queries_per_category: number;

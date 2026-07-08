@@ -146,6 +146,11 @@ class HardwareScanLane(str, Enum):
     DEEP = "deep"
 
 
+class HardwareScanScope(str, Enum):
+    NATIONWIDE = "nationwide"
+    LEGACY_STATE = "legacy_state"
+
+
 class HardwareSourceHealthStatus(str, Enum):
     HEALTHY = "healthy"
     SLOW = "slow"
@@ -177,6 +182,7 @@ class HardwareScanRequest(BaseModel):
     mode: HardwareScanMode = HardwareScanMode.BOTH
     categories: list[HardwareCategory] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
+    scan_scope: HardwareScanScope = HardwareScanScope.NATIONWIDE
     test_run: bool = True
     max_results_per_query: int = Field(default=4, ge=1, le=20)
     max_queries_per_category: int = Field(default=8, ge=1, le=40)
@@ -299,6 +305,7 @@ class HardwareOpportunity(BaseModel):
     location_city: str | None = None
     location_state: str | None = None
     zip_code: str | None = None
+    location_text: str | None = None
     requested_states: list[str] = Field(default_factory=list)
     detected_state: str | None = None
     matched_requested_state: str | None = None
@@ -353,6 +360,8 @@ class HardwareOpportunity(BaseModel):
     source_url: str
     canonical_url: str | None = None
     source_listing_id: str | None = None
+    external_id: str | None = None
+    matched_keywords: list[str] = Field(default_factory=list)
     page_type: HardwareResultPageType = HardwareResultPageType.SPECIFIC_LISTING
     classification_reason: str | None = None
     first_seen_at: datetime = Field(default_factory=utc_now)
@@ -381,7 +390,7 @@ class HardwareOpportunity(BaseModel):
     def apply_legacy_defaults(cls, data):
         if not isinstance(data, dict):
             return data
-        for field_name in ["recommendation_reasons", "risk_flags", "change_types", "score_reasons"]:
+        for field_name in ["recommendation_reasons", "risk_flags", "change_types", "score_reasons", "matched_keywords"]:
             if data.get(field_name) is None:
                 data[field_name] = []
         for field_name in ["component_details", "raw_data_json", "automated_result", "manual_result"]:
@@ -603,6 +612,7 @@ class HardwareScanJob(BaseModel):
     status: HardwareScanJobStatus = HardwareScanJobStatus.CREATED
     categories: list[HardwareCategory] = Field(default_factory=list)
     states: list[str] = Field(default_factory=list)
+    scan_scope: HardwareScanScope = HardwareScanScope.NATIONWIDE
     scan_lane: HardwareScanLane = HardwareScanLane.FAST
     generated_queries: list[HardwareGeneratedQuery] = Field(default_factory=list)
     source_runs: list[HardwareSourceRun] = Field(default_factory=list)

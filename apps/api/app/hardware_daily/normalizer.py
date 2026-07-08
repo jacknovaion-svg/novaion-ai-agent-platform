@@ -32,9 +32,15 @@ class HardwareListingNormalizer:
         current_price = self._float_or_none(detail.get("current_price")) or total_price
         quantity = self._int_or_none(detail.get("quantity")) or self._extract_quantity(text)
         location_state = detail.get("location_state") or self._extract_state(text)
+        location_text = detail.get("location_text") or " ".join(
+            str(part)
+            for part in [detail.get("location_city"), location_state, detail.get("zip_code")]
+            if part
+        ) or None
         condition = self._extract_condition(lower)
         seller_name = detail.get("seller_name") or raw.seller_name or self._seller_from_url(raw.source_url)
         source_listing_id = detail.get("source_listing_id") or raw.source_listing_id or self._listing_id_from_url(raw.source_url)
+        matched_keywords = self._matched_keywords(raw)
         confidence = self._confidence(raw.source_name, raw.raw_data.get("domain"))
         risk_flags = self._risk_flags(lower, raw.source_url)
         if detail.get("needs_manual_review"):
@@ -86,6 +92,7 @@ class HardwareListingNormalizer:
             location_city=detail.get("location_city"),
             location_state=location_state,
             zip_code=detail.get("zip_code"),
+            location_text=location_text,
             requested_states=requested_states,
             detected_state=detected_state,
             matched_requested_state=state_match.get("matched_requested_state") or raw.raw_data.get("matched_requested_state") or raw.matched_requested_state,
@@ -123,6 +130,8 @@ class HardwareListingNormalizer:
             source_url=raw.source_url,
             canonical_url=canonical_url,
             source_listing_id=source_listing_id,
+            external_id=source_listing_id,
+            matched_keywords=matched_keywords,
             page_type=raw.page_type,
             classification_reason=raw.classification_reason,
             status=status,
@@ -138,24 +147,25 @@ class HardwareListingNormalizer:
             risk_flags=list(dict.fromkeys(risk_flags)),
             raw_title=raw.original_title,
             raw_description=description,
-            raw_data_json=raw.raw_data,
+            raw_data_json={**raw.raw_data, "matched_keywords": matched_keywords, "location_text": location_text},
         )
 
     def opportunity_key(self, opportunity: HardwareOpportunity) -> str:
         source = opportunity.source.lower().strip()
-        if opportunity.source_listing_id:
-            return f"{source}:listing:{opportunity.source_listing_id.lower().strip()}"
+        external_id = opportunity.external_id or opportunity.source_listing_id
+        if external_id:
+            return f"{source}:listing:{external_id.lower().strip()}"
         if opportunity.lot_number:
             return f"{source}:lot:{opportunity.lot_number.lower().strip()}"
-        canonical_url = opportunity.canonical_url or self.canonical_url(opportunity.source_url)
-        parsed = urlparse(canonical_url)
-        canonical = f"{parsed.netloc.lower().removeprefix('www.')}{parsed.path.rstrip('/')}"
-        if parsed.query:
-            canonical = f"{canonical}?{parsed.query}"
-        if canonical:
-            return f"url:{canonical}"
-        parts = [opportunity.seller_name or "", opportunity.title, opportunity.model or "", opportunity.location_state or ""]
+        end_time = opportunity.end_time_utc or opportunity.auction_end_time or opportunity.calculated_end_time
+        parts = [source, opportunity.title, opportunity.location_text or "", opportunity.location_city or "", opportunity.location_state or "", end_time.isoformat() if end_time else ""]
         return "text:" + "|".join(part.lower().strip() for part in parts if part)
+
+    def _matched_keywords(self, raw: RawHardwareListing) -> list[str]:
+        values = raw.raw_data.get("matched_keywords") or []
+        if isinstance(values, str):
+            values = [values]
+        return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
     def canonical_url(self, url: str) -> str:
         parsed = urlparse(url)

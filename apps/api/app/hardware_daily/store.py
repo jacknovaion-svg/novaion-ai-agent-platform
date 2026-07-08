@@ -74,6 +74,8 @@ class HardwareDailyMemoryStore:
         current.last_seen_job_id = job_id or previous.last_seen_job_id
         current.last_updated_job_id = previous.last_updated_job_id
         current.last_seen_at = utc_now()
+        current.matched_keywords = list(dict.fromkeys([*(previous.matched_keywords or []), *(current.matched_keywords or [])]))
+        current.raw_data_json["matched_keywords"] = current.matched_keywords
         if current.total_price != previous.total_price or current.unit_price != previous.unit_price:
             changes.append(HardwareChangeType.PRICE_CHANGED)
         if current.quantity != previous.quantity:
