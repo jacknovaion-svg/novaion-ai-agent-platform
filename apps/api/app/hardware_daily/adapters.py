@@ -668,6 +668,19 @@ class ManualHardwareImportAdapter(HardwareSourceAdapter):
             title = self._title_for_url(normalized_url, request.manual_text)
             snippet = self._snippet_for_url(normalized_url, request.manual_text)
             classification = self.quality.classify(source_name, normalized_url, title, snippet)
+            manual_requires_review = source_name != self.source_name and classification.page_type != HardwareResultPageType.SPECIFIC_LISTING
+            page_type = HardwareResultPageType.SPECIFIC_LISTING if manual_requires_review else classification.page_type
+            classification_reason = (
+                "Manual imported marketplace URL needs review; paste the specific lot URL when this is a search or collection page."
+                if manual_requires_review
+                else classification.reason
+            )
+            detail = {
+                "needs_manual_review": True,
+                "listing_status": "needs_manual_review",
+                "listing_status_reason": classification_reason,
+                "status_check_result": "manual_import_needs_specific_listing_url",
+            } if manual_requires_review else {}
             listings.append(
                 RawHardwareListing(
                     source_name=source_name,
@@ -675,16 +688,17 @@ class ManualHardwareImportAdapter(HardwareSourceAdapter):
                     original_title=title,
                     original_description=snippet,
                     category=query.category,
-                    page_type=classification.page_type,
-                    classification_reason=classification.reason,
+                    page_type=page_type,
+                    classification_reason=classification_reason,
                     raw_data={
                         "query": query.generated_query_en,
                         "manual": True,
                         "adapter_type": self.adapter_type,
                         "source_access_mode": "manual_import",
                         "matched_keywords": [getattr(query, "query_template", None) or "manual import"],
-                        "page_type": classification.page_type.value,
-                        "classification_reason": classification.reason,
+                        "detail": detail,
+                        "page_type": page_type.value,
+                        "classification_reason": classification_reason,
                     },
                 )
             )

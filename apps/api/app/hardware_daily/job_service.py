@@ -801,6 +801,8 @@ class HardwareHunterDailyScheduler:
                     raw_results.extend(results)
                     source_run.status = HardwareSourceRunStatus.SUCCESS
                     source_run.result_count = len(results)
+                    source_run.raw_results = len(results)
+                    source_run.specific_listing_count = len([item for item in results if item.page_type == HardwareResultPageType.SPECIFIC_LISTING])
                 except Exception as exc:
                     source_run.status = self._status_from_exception(exc)
                     source_run.error_message = str(exc)[:500]
