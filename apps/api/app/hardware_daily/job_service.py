@@ -589,11 +589,20 @@ class HardwareHunterDailyScheduler:
             key=lambda item: (item.opportunity_score, -item.risk_score),
             reverse=True,
         )[:20]
+        latest_for_dashboard = latest.model_copy(deep=True) if latest else None
+        if latest_for_dashboard:
+            latest_for_dashboard.opportunities = [
+                item
+                for item in current
+                if item.last_seen_job_id == latest_for_dashboard.id
+                or item.last_updated_job_id == latest_for_dashboard.id
+                or item.first_seen_job_id == latest_for_dashboard.id
+            ][:120]
         return HardwareDashboard(
             total_jobs=len(jobs),
             total_opportunities_seen=len(hardware_daily_store.opportunities_by_key),
             active_opportunities=len(current),
-            latest_job=latest,
+            latest_job=latest_for_dashboard,
             telegram_enabled=self.settings.hardware_hunter_telegram_enabled,
             daily_report_hour=self.settings.hardware_hunter_daily_report_hour,
             timezone=self.settings.hardware_hunter_timezone,

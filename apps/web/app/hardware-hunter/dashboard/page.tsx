@@ -173,9 +173,10 @@ export default function HardwareDashboardPage() {
       ...(dashboard?.top_opportunities ?? []),
       ...(dashboard?.history_opportunities ?? []),
       ...(dashboard?.needs_review_opportunities ?? []),
+      ...(dashboard?.latest_job?.opportunities ?? []),
       ...(job?.opportunities ?? []),
     ]),
-    [dashboard?.history_opportunities, dashboard?.needs_review_opportunities, dashboard?.top_opportunities, job?.opportunities],
+    [dashboard?.history_opportunities, dashboard?.latest_job?.opportunities, dashboard?.needs_review_opportunities, dashboard?.top_opportunities, job?.opportunities],
   );
   const latestJob = job ?? dashboard?.latest_job ?? null;
   const latestJobId = latestJob?.id ?? null;
@@ -1770,7 +1771,9 @@ function getScopedOpportunities(
   const jobOpportunityIds = new Set(jobOpportunities.map((item) => item.opportunity_id));
   let scoped = opportunities;
   if (scope === "current_scan") {
-    scoped = latestJobId
+    scoped = jobOpportunities.length
+      ? jobOpportunities
+      : latestJobId
       ? opportunities.filter((item) => isOpportunityFromJob(item, latestJobId, jobOpportunityIds))
       : [];
   } else if (scope === "all_current") {
