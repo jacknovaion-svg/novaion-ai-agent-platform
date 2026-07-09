@@ -4,6 +4,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 import re
 from urllib.parse import quote_plus, urljoin, urlparse
 
@@ -14,6 +15,8 @@ from app.adapters.browser import chromium_browser
 from app.hardware_daily.models import HardwareResultPageType, HardwareScanRequest, RawHardwareListing, utc_now
 from app.hardware_daily.quality import HardwareResultQualityClassifier
 from app.site_hunter.web_search import WebSearchClient
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -403,14 +406,19 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
     async def _govauctions_app_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
         keyword = self._marketplace_keyword(query)
         feed_url = f"https://govauctions.app/feed?q={quote_plus(keyword)}&sort=relevance"
-        headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "User-Agent": "Mozilla/5.0 (compatible; NOVAIONHardwareHunter/2.8A; +https://novaion.ai)",
-        }
-        async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
-            response = await client.get(feed_url)
-            response.raise_for_status()
-            html = response.text
+        html = await self._govauctions_rendered_html(feed_url, keyword)
+        access_mode = "playwright_interactive_search" if html else "direct_html_fallback"
+        response_status: int | str | None = None
+        if not html:
+            headers = {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "User-Agent": "Mozilla/5.0 (compatible; NOVAIONHardwareHunter/2.8A; +https://novaion.ai)",
+            }
+            async with httpx.AsyncClient(timeout=15, follow_redirects=True, headers=headers) as client:
+                response = await client.get(feed_url)
+                response_status = response.status_code
+                response.raise_for_status()
+                html = response.text
 
         soup = BeautifulSoup(html, "html.parser")
         listings: list[RawHardwareListing] = []
@@ -418,11 +426,8 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
         links = soup.select('a[href^="/auction/"], a[href*="govauctions.app/auction/"]')
         if not links:
             links = self._govauctions_links_from_next_chunks(html)
-        if not links:
-            rendered_html = await self._govauctions_rendered_html(feed_url)
-            if rendered_html:
-                soup = BeautifulSoup(rendered_html, "html.parser")
-                links = soup.select('a[href^="/auction/"], a[href*="govauctions.app/auction/"]') or self._govauctions_links_from_next_chunks(rendered_html)
+        parsed_titles: list[str] = []
+        original_url_count = 0
         for link in links:
             href = link.get("href") if hasattr(link, "get") else str(link)
             if not href:
@@ -494,6 +499,7 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                         "verification_status": "pending",
                         "last_verified_at": None,
                         "source_access_mode": "aggregator_discovery",
+                        "source_access_status": access_mode,
                         "matched_keywords": [keyword],
                         "page_type": HardwareResultPageType.SPECIFIC_LISTING.value,
                         "classification_reason": "Aggregator result requires original source verification before Telegram.",
@@ -502,21 +508,55 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                     fetched_at=utc_now(),
                 )
             )
+            parsed_titles.append(title)
+            if parsed["canonical_source_url"]:
+                original_url_count += 1
             if len(listings) >= request.max_results_per_query:
                 break
+        verification_summary = {"pending": len(listings)}
+        logger.info(
+            "GovAuctions.app source requested_url=%s access_mode=%s response_status=%s links_seen=%s extracted_result_count=%s first_titles=%s original_source_url_count=%s verification_status=%s",
+            feed_url,
+            access_mode,
+            response_status or "rendered",
+            len(links),
+            len(listings),
+            parsed_titles[:3],
+            original_url_count,
+            verification_summary,
+        )
         return listings
 
-    async def _govauctions_rendered_html(self, feed_url: str) -> str | None:
+    async def _govauctions_rendered_html(self, feed_url: str, keyword: str | None = None) -> str | None:
         try:
             async with chromium_browser() as browser:
                 page = await browser.new_page()
-                await page.goto(feed_url, wait_until="domcontentloaded", timeout=7000)
+                start_url = "https://govauctions.app/feed" if keyword else feed_url
+                await page.goto(start_url, wait_until="domcontentloaded", timeout=10000)
+                if keyword:
+                    search = page.locator('input[placeholder="Search auctions..."]')
+                    await search.fill(keyword, timeout=7000)
+                    await search.press("Enter", timeout=7000)
+                    try:
+                        await page.wait_for_url(re.compile(r".*[?&]q="), timeout=7000)
+                    except Exception:
+                        pass
                 try:
-                    await page.wait_for_selector('a[href^="/auction/"]', timeout=5000)
+                    await page.wait_for_selector('a[href^="/auction/"]', timeout=7000)
                 except Exception:
                     pass
+                if keyword:
+                    try:
+                        await page.wait_for_function(
+                            """keyword => document.body && document.body.innerText.toLowerCase().includes(keyword.toLowerCase())""",
+                            keyword,
+                            timeout=7000,
+                        )
+                    except Exception:
+                        pass
                 return await asyncio.wait_for(page.content(), timeout=3)
-        except Exception:
+        except Exception as exc:
+            logger.info("GovAuctions.app rendered search failed url=%s keyword=%s error=%s", feed_url, keyword, str(exc)[:160])
             return None
 
     def _govauctions_links_from_next_chunks(self, html: str) -> list[str]:

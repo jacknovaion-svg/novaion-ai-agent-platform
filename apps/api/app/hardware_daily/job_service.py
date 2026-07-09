@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from app.core.config import get_settings
 from app.hardware_daily.adapters import ManualHardwareImportAdapter, WebSearchHardwareAdapter
 from app.hardware_daily.browser_import import GovDealsVisibleTextParser
-from app.hardware_daily.catalog import HardwareSearchQueryBuilder
+from app.hardware_daily.catalog import HardwareSearchQueryBuilder, SOURCE_CONFIGS
 from app.hardware_daily.models import (
     HardwareBrowserImportRequest,
     HardwareCategory,
@@ -723,7 +723,7 @@ class HardwareHunterDailyScheduler:
         semaphore = asyncio.Semaphore(4)
 
         async def run_query(query) -> list[RawHardwareListing]:
-            timeout_seconds = self._query_timeout_seconds(query.scan_lane)
+            timeout_seconds = self._query_timeout_seconds(query.scan_lane, query.source_group)
             if self._is_cancelled(job.id):
                 query.status = HardwareSourceRunStatus.CANCELLED
                 return []
@@ -1142,7 +1142,10 @@ class HardwareHunterDailyScheduler:
             return HardwareSourceRunStatus.BLOCKED
         return HardwareSourceRunStatus.FAILED
 
-    def _query_timeout_seconds(self, scan_lane: HardwareScanLane) -> int:
+    def _query_timeout_seconds(self, scan_lane: HardwareScanLane, source_name: str | None = None) -> int:
+        configured_timeout = SOURCE_CONFIGS.get(source_name or "", {}).get("default_timeout_seconds")
+        if isinstance(configured_timeout, int):
+            return max(5, configured_timeout)
         if scan_lane == HardwareScanLane.DEEP:
             return max(5, self.settings.hardware_deep_query_timeout_seconds)
         return max(5, self.settings.hardware_fast_query_timeout_seconds)
