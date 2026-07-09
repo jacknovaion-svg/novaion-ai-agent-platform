@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import threading
 from datetime import timedelta, timezone
 from uuid import UUID
@@ -46,6 +47,9 @@ from app.hardware_daily.scoring import HardwareOpportunityScoringService
 from app.hardware_daily.state_matcher import hardware_state_matcher
 from app.hardware_daily.status_recheck import listing_status_recheck_service
 from app.hardware_daily.store import hardware_daily_store
+
+
+logger = logging.getLogger(__name__)
 
 
 class HardwareHunterDailyScheduler:
@@ -893,16 +897,45 @@ class HardwareHunterDailyScheduler:
 
     async def _enrich_specific_listings(self, raw_results: list[RawHardwareListing]) -> list[RawHardwareListing]:
         enriched: list[RawHardwareListing] = []
+        govauctions_total = 0
+        govauctions_original_urls: list[str] = []
+        govauctions_status_counts = {"verified": 0, "pending": 0, "failed": 0}
+        govauctions_reasons: list[str] = []
         for raw in raw_results:
             if raw.raw_data.get("adapter_type") == "govauctions_app_feed" and raw.raw_data.get("verification_status") != "verified":
-                raw.detail_checked_at = utc_now()
-                raw.detail_parse_status = "pending_original_source_verification"
-                detail = dict(raw.raw_data.get("detail") or {})
-                detail["needs_manual_review"] = True
-                detail["unavailable_reason"] = "pending_original_source_verification"
-                detail["listing_status_reason"] = "GovAuctions.app discovery requires original source verification."
-                raw.raw_data["detail"] = detail
-                enriched.append(raw)
+                govauctions_total += 1
+                original_url = (
+                    raw.raw_data.get("original_source_url")
+                    or raw.raw_data.get("canonical_source_url")
+                    or (raw.raw_data.get("detail") or {}).get("original_source_url")
+                    or raw.source_url
+                )
+                if original_url:
+                    govauctions_original_urls.append(str(original_url))
+                try:
+                    verified_raw = await asyncio.wait_for(self.detail_parser.verify_govauctions_discovery(raw), timeout=30)
+                except Exception as exc:
+                    verified_raw = raw
+                    verified_raw.detail_parse_status = "failed_original_source_verification"
+                    verified_raw.detail_checked_at = utc_now()
+                    detail = dict(verified_raw.raw_data.get("detail") or {})
+                    detail["verification_status"] = "failed"
+                    detail["verification_reason"] = f"verification_exception:{str(exc)[:160]}"
+                    detail["needs_manual_review"] = True
+                    detail["unavailable_reason"] = detail["verification_reason"]
+                    detail["checked_at"] = verified_raw.detail_checked_at.isoformat()
+                    verified_raw.raw_data["detail"] = detail
+                    verified_raw.raw_data["verification_status"] = "failed"
+                    verified_raw.raw_data["last_verified_at"] = verified_raw.detail_checked_at.isoformat()
+                detail = dict(verified_raw.raw_data.get("detail") or {})
+                status = str(verified_raw.raw_data.get("verification_status") or detail.get("verification_status") or "pending")
+                if status not in govauctions_status_counts:
+                    govauctions_status_counts[status] = 0
+                govauctions_status_counts[status] += 1
+                reason = str(detail.get("verification_reason") or detail.get("unavailable_reason") or "")
+                if status != "verified" and reason:
+                    govauctions_reasons.append(reason[:180])
+                enriched.append(verified_raw)
                 continue
             try:
                 enriched.append(await asyncio.wait_for(self.detail_parser.enrich(raw), timeout=25))
@@ -916,6 +949,17 @@ class HardwareHunterDailyScheduler:
                     "checked_at": raw.detail_checked_at.isoformat(),
                 }
                 enriched.append(raw)
+        if govauctions_total:
+            logger.info(
+                "GovAuctions.app verification summary extracted_listings=%s original_source_url_count=%s verified=%s pending=%s failed=%s first_original_source_urls=%s pending_failed_reasons=%s",
+                govauctions_total,
+                len([url for url in govauctions_original_urls if url]),
+                govauctions_status_counts.get("verified", 0),
+                govauctions_status_counts.get("pending", 0),
+                govauctions_status_counts.get("failed", 0),
+                govauctions_original_urls[:3],
+                list(dict.fromkeys(govauctions_reasons))[:5],
+            )
         return enriched
 
     def _replace_enriched_results(self, raw_results: list[RawHardwareListing], enriched_results: list[RawHardwareListing]) -> list[RawHardwareListing]:

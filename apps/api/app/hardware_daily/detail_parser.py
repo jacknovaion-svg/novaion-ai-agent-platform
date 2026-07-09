@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import parse_qs, urlparse
 
@@ -9,6 +10,8 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.hardware_daily.models import AuctionEndVerificationLevel, ListingStatus, RawHardwareListing, utc_now
+
+logger = logging.getLogger(__name__)
 
 
 TZ_OFFSETS = {
@@ -75,6 +78,106 @@ class HardwareListingDetailParser:
             detail.update(self._finalize_status(detail, captured_at))
             return self._with_detail(raw, detail, "parse_error")
 
+    async def verify_govauctions_discovery(self, raw: RawHardwareListing) -> RawHardwareListing:
+        detail = dict(raw.raw_data.get("detail") or {})
+        original_url = (
+            detail.get("original_source_url")
+            or detail.get("canonical_source_url")
+            or raw.raw_data.get("original_source_url")
+            or raw.raw_data.get("canonical_source_url")
+        )
+        if not original_url and "govauctions.app" not in urlparse(raw.source_url).netloc.lower():
+            original_url = raw.source_url
+        now = utc_now()
+        raw.raw_data["verification_status"] = "pending"
+        raw.raw_data["last_verified_at"] = now.isoformat()
+        detail["last_verified_at"] = now.isoformat()
+        detail["original_source_url"] = str(original_url) if original_url else None
+        detail["canonical_source_url"] = str(original_url) if original_url else detail.get("canonical_source_url")
+
+        if not original_url:
+            detail.update(
+                {
+                    "verification_status": "pending",
+                    "verification_reason": "no_original_source_url",
+                    "needs_manual_review": True,
+                    "unavailable_reason": "no_original_source_url",
+                    "listing_status_reason": "GovAuctions.app discovery did not expose an original auction URL.",
+                }
+            )
+            raw.raw_data["detail"] = detail
+            raw.detail_checked_at = now
+            raw.detail_parse_status = "pending_original_source_missing"
+            return raw
+
+        enriched = await self.enrich(raw)
+        detail = dict(enriched.raw_data.get("detail") or {})
+        http_status = int(detail.get("http_status") or 0)
+        parse_status = enriched.detail_parse_status or ""
+        blocked = parse_status in {"blocked_or_challenged", "http_unavailable", "timeout", "parse_error"}
+        key_fields = [
+            bool(detail.get("end_time_utc") or detail.get("auction_end_time") or detail.get("calculated_end_time")),
+            detail.get("current_price") is not None or detail.get("total_price") is not None,
+            bool(detail.get("location_state") or detail.get("location_city") or detail.get("location_text")),
+            bool(detail.get("title")),
+        ]
+        field_count = sum(1 for value in key_fields if value)
+        id_match = self._govauctions_original_id_match(str(original_url), detail.get("source_listing_id") or enriched.source_listing_id)
+        title_match = self._title_similarity(enriched.original_title, detail.get("title") or raw.original_title) >= 0.35
+        accessible = http_status and 200 <= http_status < 400 and not blocked
+        reason_parts = []
+        if not accessible:
+            reason_parts.append(f"original_source_unavailable:{http_status or parse_status or 'unknown'}")
+        if not id_match and not title_match:
+            reason_parts.append("title_or_id_not_confirmed")
+        if field_count < 2:
+            reason_parts.append("insufficient_key_fields")
+
+        if accessible and (id_match or title_match) and field_count >= 2:
+            detail["verification_status"] = "verified"
+            detail["verification_reason"] = "original_source_accessible_with_matching_identity_and_key_fields"
+            detail["needs_manual_review"] = False
+            detail.pop("unavailable_reason", None)
+            detail["listing_status_reason"] = "GovAuctions.app discovery verified against original auction source."
+            enriched.raw_data["verification_status"] = "verified"
+            enriched.raw_data["last_verified_at"] = now.isoformat()
+            enriched.raw_data["original_source_url"] = str(original_url)
+            enriched.raw_data["canonical_source_url"] = str(original_url)
+            enriched.detail_parse_status = "verified_original_source"
+        else:
+            verification_status = "failed" if not accessible else "pending"
+            reason = ";".join(reason_parts) or "verification_incomplete"
+            detail["verification_status"] = verification_status
+            detail["verification_reason"] = reason
+            detail["needs_manual_review"] = True
+            detail["unavailable_reason"] = reason
+            detail["listing_status_reason"] = "GovAuctions.app discovery still requires original source verification."
+            enriched.raw_data["verification_status"] = verification_status
+            enriched.raw_data["last_verified_at"] = now.isoformat()
+            enriched.raw_data["original_source_url"] = str(original_url)
+            enriched.raw_data["canonical_source_url"] = str(original_url)
+            enriched.detail_parse_status = f"{verification_status}_original_source_verification"
+
+        detail["original_source_url"] = str(original_url)
+        detail["canonical_source_url"] = str(original_url)
+        detail["original_source_platform"] = detail.get("original_source_platform") or raw.raw_data.get("original_source_platform")
+        detail["verification_field_count"] = field_count
+        detail["verification_id_match"] = id_match
+        detail["verification_title_match"] = title_match
+        detail["verification_http_status"] = http_status or None
+        detail["last_verified_at"] = now.isoformat()
+        enriched.raw_data["detail"] = detail
+        logger.info(
+            "GovAuctions.app verification original_url=%s status=%s reason=%s field_count=%s http_status=%s title=%s",
+            original_url,
+            enriched.raw_data.get("verification_status"),
+            detail.get("verification_reason"),
+            field_count,
+            http_status or None,
+            enriched.original_title[:120],
+        )
+        return enriched
+
     def _with_detail(self, raw: RawHardwareListing, detail: dict, status: str) -> RawHardwareListing:
         raw.raw_data["detail"] = detail
         raw.detail_checked_at = utc_now()
@@ -86,6 +189,25 @@ class HardwareListingDetailParser:
         if detail.get("source_listing_id"):
             raw.source_listing_id = detail["source_listing_id"]
         return raw
+
+    def _govauctions_original_id_match(self, original_url: str, listing_id: str | None) -> bool:
+        if not listing_id:
+            return False
+        url_digits = re.findall(r"\d{2,}", original_url)
+        id_digits = re.findall(r"\d{2,}", str(listing_id))
+        if not url_digits or not id_digits:
+            return False
+        return bool(set(url_digits) & set(id_digits))
+
+    def _title_similarity(self, left: str | None, right: str | None) -> float:
+        if not left or not right:
+            return 0.0
+        stop = {"lot", "of", "the", "and", "for", "with", "server", "servers"}
+        left_tokens = {token for token in re.findall(r"[a-z0-9]{3,}", left.lower()) if token not in stop}
+        right_tokens = {token for token in re.findall(r"[a-z0-9]{3,}", right.lower()) if token not in stop}
+        if not left_tokens or not right_tokens:
+            return 0.0
+        return len(left_tokens & right_tokens) / max(1, len(left_tokens | right_tokens))
 
     def _looks_blocked(self, html: str) -> bool:
         lower = html.lower()
