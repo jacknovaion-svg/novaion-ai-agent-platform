@@ -80,7 +80,7 @@ SOURCE_CONFIGS = {
     "GovAuctions.app": {
         "enabled": True,
         "scan_lane": HardwareScanLane.FAST,
-        "default_timeout_seconds": 25,
+        "default_timeout_seconds": 75,
         "max_retries": 0,
         "max_concurrency": 1,
         "cache_ttl_minutes": 30,

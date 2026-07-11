@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -406,7 +407,8 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
     async def _govauctions_app_search(self, query, request: HardwareScanRequest) -> list[RawHardwareListing]:
         keyword = self._marketplace_keyword(query)
         feed_url = f"https://govauctions.app/feed?q={quote_plus(keyword)}&sort=relevance"
-        html = await self._govauctions_rendered_html(feed_url, keyword)
+        max_pages, max_results = self._govauctions_paging_limits()
+        html, page_meta = await self._govauctions_rendered_html(feed_url, keyword, max_pages=max_pages, max_results=max_results)
         access_mode = "playwright_interactive_search" if html else "direct_html_fallback"
         response_status: int | str | None = None
         if not html:
@@ -419,10 +421,15 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                 response_status = response.status_code
                 response.raise_for_status()
                 html = response.text
+                page_meta = {
+                    "pages_scanned": 1,
+                    "visible_cards": 0,
+                    "stopped_reason": "direct_html_fallback",
+                }
 
         soup = BeautifulSoup(html, "html.parser")
         listings: list[RawHardwareListing] = []
-        seen: set[str] = set()
+        seen_keys: set[str] = set()
         links = soup.select('a[href^="/auction/"], a[href*="govauctions.app/auction/"]')
         if not links:
             links = self._govauctions_links_from_next_chunks(html)
@@ -433,9 +440,6 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             if not href:
                 continue
             govauctions_url = urljoin("https://govauctions.app", href)
-            if govauctions_url in seen:
-                continue
-            seen.add(govauctions_url)
             container_text = self._govauctions_card_text(link)
             parsed = self._parse_govauctions_card(govauctions_url, container_text, query.category, keyword)
             if not parsed:
@@ -450,6 +454,16 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             snippet = parsed["snippet"]
             if not self._is_category_relevant(query.category.value, title, snippet):
                 continue
+            fallback_key = "|".join(
+                str(value or "").strip().lower()
+                for value in [title, parsed["location_text"], parsed["calculated_end_time"] or parsed["time_remaining"]]
+            )
+            dedupe_keys = [govauctions_url, parsed["canonical_source_url"], fallback_key]
+            if any(key and key in seen_keys for key in dedupe_keys):
+                continue
+            for key in dedupe_keys:
+                if key:
+                    seen_keys.add(key)
             original_source = parsed["original_source_platform"] or "GovAuctions.app"
             source_url = parsed["canonical_source_url"] or govauctions_url
             source_listing_id = parsed["source_listing_id"]
@@ -517,23 +531,43 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             parsed_titles.append(title)
             if parsed["canonical_source_url"]:
                 original_url_count += 1
-            if len(listings) >= request.max_results_per_query:
+            if len(listings) >= max_results:
                 break
         verification_summary = {"pending": len(listings)}
         logger.info(
-            "GovAuctions.app source requested_url=%s access_mode=%s response_status=%s links_seen=%s extracted_result_count=%s first_titles=%s original_source_url_count=%s verification_status=%s",
+            "GovAuctions.app source requested_url=%s query=%s access_mode=%s response_status=%s pages_scanned=%s visible_cards=%s links_seen=%s unique_listings=%s extracted_result_count=%s first_titles=%s original_source_url_count=%s verification_status=%s stopped_reason=%s max_pages=%s max_results=%s",
             feed_url,
+            keyword,
             access_mode,
             response_status or "rendered",
+            page_meta.get("pages_scanned"),
+            page_meta.get("visible_cards"),
             len(links),
+            len(seen_keys),
             len(listings),
             parsed_titles[:3],
             original_url_count,
             verification_summary,
+            page_meta.get("stopped_reason"),
+            max_pages,
+            max_results,
         )
         return listings
 
-    async def _govauctions_rendered_html(self, feed_url: str, keyword: str | None = None) -> str | None:
+    def _govauctions_paging_limits(self) -> tuple[int, int]:
+        max_pages = self._env_int("GOVAUCTIONS_MAX_PAGES", default=3, minimum=1, maximum=10)
+        max_results = self._env_int("GOVAUCTIONS_MAX_RESULTS_PER_QUERY", default=75, minimum=1, maximum=150)
+        return max_pages, max_results
+
+    def _env_int(self, name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, min(maximum, value))
+
+    async def _govauctions_rendered_html(self, feed_url: str, keyword: str | None = None, *, max_pages: int = 3, max_results: int = 75) -> tuple[str | None, dict]:
+        meta = {"pages_scanned": 0, "visible_cards": 0, "stopped_reason": "unknown"}
         try:
             async with chromium_browser() as browser:
                 page = await browser.new_page()
@@ -560,10 +594,74 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
                         )
                     except Exception:
                         pass
-                return await asyncio.wait_for(page.content(), timeout=3)
+                meta = await self._govauctions_load_more_results(page, max_pages=max_pages, max_results=max_results)
+                html = await asyncio.wait_for(page.content(), timeout=3)
+                return html, meta
         except Exception as exc:
             logger.info("GovAuctions.app rendered search failed url=%s keyword=%s error=%s", feed_url, keyword, str(exc)[:160])
-            return None
+            meta["stopped_reason"] = "timeout"
+            return None, meta
+
+    async def _govauctions_load_more_results(self, page, *, max_pages: int, max_results: int) -> dict:
+        selector = 'a[href^="/auction/"]'
+        pages_scanned = 1
+        stopped_reason = "no_more_results"
+        visible_cards = await self._govauctions_visible_card_count(page, selector)
+        if visible_cards >= max_results:
+            return {"pages_scanned": pages_scanned, "visible_cards": visible_cards, "stopped_reason": "max_results"}
+        for _ in range(max(0, max_pages - 1)):
+            before_count = visible_cards
+            before_height = await page.evaluate("() => document.body ? document.body.scrollHeight : 0")
+            clicked = await self._govauctions_click_more(page)
+            if clicked:
+                await page.wait_for_timeout(1800)
+            else:
+                await page.evaluate("() => window.scrollTo(0, document.body ? document.body.scrollHeight : 0)")
+                await page.wait_for_timeout(2200)
+            visible_cards = await self._govauctions_visible_card_count(page, selector)
+            after_height = await page.evaluate("() => document.body ? document.body.scrollHeight : 0")
+            if visible_cards > before_count or after_height > before_height:
+                pages_scanned += 1
+                if visible_cards >= max_results:
+                    stopped_reason = "max_results"
+                    break
+                if pages_scanned >= max_pages:
+                    stopped_reason = "max_pages"
+                    break
+                continue
+            stopped_reason = "no_more_results"
+            break
+        else:
+            stopped_reason = "max_pages"
+        return {"pages_scanned": pages_scanned, "visible_cards": visible_cards, "stopped_reason": stopped_reason}
+
+    async def _govauctions_visible_card_count(self, page, selector: str) -> int:
+        try:
+            return int(await page.locator(selector).count())
+        except Exception:
+            return 0
+
+    async def _govauctions_click_more(self, page) -> bool:
+        try:
+            return bool(
+                await page.evaluate(
+                    """() => {
+                        const pattern = /^(load more|show more|more results|next|next page)$/i;
+                        const elements = Array.from(document.querySelectorAll('button,a'));
+                        const target = elements.find(el => {
+                            const text = (el.innerText || el.textContent || el.getAttribute('aria-label') || '').trim();
+                            const disabled = el.disabled || el.getAttribute('aria-disabled') === 'true';
+                            const visible = !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+                            return visible && !disabled && pattern.test(text);
+                        });
+                        if (!target) return false;
+                        target.click();
+                        return true;
+                    }"""
+                )
+            )
+        except Exception:
+            return False
 
     def _govauctions_links_from_next_chunks(self, html: str) -> list[str]:
         html = html.replace("\\u002F", "/").replace("\\/", "/")

@@ -901,6 +901,7 @@ class HardwareHunterDailyScheduler:
         govauctions_original_urls: list[str] = []
         govauctions_status_counts = {"verified": 0, "pending": 0, "failed": 0}
         govauctions_reasons: list[str] = []
+        govauctions_verified_titles: list[str] = []
         for raw in raw_results:
             if raw.raw_data.get("adapter_type") == "govauctions_app_feed" and raw.raw_data.get("verification_status") != "verified":
                 govauctions_total += 1
@@ -933,6 +934,8 @@ class HardwareHunterDailyScheduler:
                     govauctions_status_counts[status] = 0
                 govauctions_status_counts[status] += 1
                 reason = str(detail.get("verification_reason") or detail.get("unavailable_reason") or "")
+                if status == "verified":
+                    govauctions_verified_titles.append(verified_raw.original_title[:140])
                 if status != "verified" and reason:
                     govauctions_reasons.append(reason[:180])
                 enriched.append(verified_raw)
@@ -951,14 +954,15 @@ class HardwareHunterDailyScheduler:
                 enriched.append(raw)
         if govauctions_total:
             logger.info(
-                "GovAuctions.app verification summary extracted_listings=%s original_source_url_count=%s verified=%s pending=%s failed=%s first_original_source_urls=%s pending_failed_reasons=%s",
+                "GovAuctions.app verification summary extracted_listings=%s original_source_url_count=%s verified=%s pending=%s failed=%s first_original_source_urls=%s first_verified_titles=%s first_pending_failed_reasons=%s",
                 govauctions_total,
                 len([url for url in govauctions_original_urls if url]),
                 govauctions_status_counts.get("verified", 0),
                 govauctions_status_counts.get("pending", 0),
                 govauctions_status_counts.get("failed", 0),
                 govauctions_original_urls[:3],
-                list(dict.fromkeys(govauctions_reasons))[:5],
+                govauctions_verified_titles[:3],
+                list(dict.fromkeys(govauctions_reasons))[:3],
             )
         return enriched
 
