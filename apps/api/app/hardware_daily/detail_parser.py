@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from app.adapters.browser import chromium_browser
 from app.hardware_daily.models import AuctionEndVerificationLevel, ListingStatus, RawHardwareListing, utc_now
 
 logger = logging.getLogger(__name__)
@@ -115,11 +116,22 @@ class HardwareListingDetailParser:
         http_status = int(detail.get("http_status") or 0)
         parse_status = enriched.detail_parse_status or ""
         blocked = parse_status in {"blocked_or_challenged", "http_unavailable", "timeout", "parse_error"}
+        if blocked or not (http_status and 200 <= http_status < 400):
+            playwright_detail = await self._playwright_original_source_detail(enriched, str(original_url), now)
+            if playwright_detail:
+                detail.update({key: value for key, value in playwright_detail.items() if value is not None})
+                enriched.raw_data["detail"] = detail
+                enriched.detail_parse_status = "checked_with_playwright"
+                http_status = int(detail.get("http_status") or 0)
+                parse_status = enriched.detail_parse_status or ""
+                blocked = bool(detail.get("playwright_blocked"))
         key_fields = [
             bool(detail.get("end_time_utc") or detail.get("auction_end_time") or detail.get("calculated_end_time")),
             detail.get("current_price") is not None or detail.get("total_price") is not None,
             bool(detail.get("location_state") or detail.get("location_city") or detail.get("location_text")),
             bool(detail.get("title")),
+            bool(detail.get("original_source_platform") or raw.raw_data.get("original_source_platform")),
+            bool(detail.get("description")),
         ]
         field_count = sum(1 for value in key_fields if value)
         id_match = self._govauctions_original_id_match(str(original_url), detail.get("source_listing_id") or enriched.source_listing_id)
@@ -127,7 +139,10 @@ class HardwareListingDetailParser:
         accessible = http_status and 200 <= http_status < 400 and not blocked
         reason_parts = []
         if not accessible:
-            reason_parts.append(f"original_source_unavailable:{http_status or parse_status or 'unknown'}")
+            if blocked or http_status in {401, 403}:
+                reason_parts.append(f"source_requires_auth_or_access_denied:{http_status or parse_status or 'unknown'}")
+            else:
+                reason_parts.append(f"original_source_unavailable:{http_status or parse_status or 'unknown'}")
         if not id_match and not title_match:
             reason_parts.append("title_or_id_not_confirmed")
         if field_count < 2:
@@ -177,6 +192,83 @@ class HardwareListingDetailParser:
             enriched.original_title[:120],
         )
         return enriched
+
+    async def _playwright_original_source_detail(self, raw: RawHardwareListing, original_url: str, captured_at: datetime) -> dict:
+        try:
+            async with chromium_browser() as browser:
+                page = await browser.new_page()
+                response = await page.goto(original_url, wait_until="domcontentloaded", timeout=18000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=5000)
+                except Exception:
+                    pass
+                html = await page.content()
+                title = await page.title()
+                try:
+                    body_text = await page.locator("body").inner_text(timeout=5000)
+                except Exception:
+                    body_text = BeautifulSoup(html, "html.parser").get_text(" ", strip=True)
+                final_url = page.url
+                http_status = response.status if response else None
+        except Exception as exc:
+            return {
+                "playwright_status": "failed",
+                "playwright_error": str(exc)[:240],
+            }
+
+        text = re.sub(r"\s+", " ", body_text or "").strip()
+        searchable = f"{title or ''} {text}"
+        signals = self._extract_end_time_signals(searchable, captured_at)
+        price = self._extract_money_after(searchable, ["Current Bid", "Current Price", "High Bid", "Price", "Bid"])
+        location = self._extract_location_from_text(searchable)
+        blocked = self._looks_blocked(searchable)
+        source_platform = raw.raw_data.get("original_source_platform") or self._platform_from_url(final_url or original_url)
+        parsed_title = title if title and title.lower() not in {"home", "govdeals"} else raw.original_title
+        if blocked:
+            parsed_title = raw.original_title
+        return {
+            "http_status": http_status,
+            "playwright_status": "success",
+            "playwright_final_url": final_url,
+            "playwright_blocked": blocked,
+            "title": parsed_title,
+            "description": raw.original_description if blocked else (text[:1200] if text else raw.original_description),
+            "current_price": price,
+            "total_price": price,
+            "location_city": location.get("city"),
+            "location_state": location.get("state"),
+            "location_text": location.get("text"),
+            "original_source_platform": source_platform,
+            **signals,
+        }
+
+    def _platform_from_url(self, url: str) -> str | None:
+        domain = urlparse(url).netloc.lower()
+        if "govdeals.com" in domain:
+            return "GovDeals"
+        if "publicsurplus.com" in domain:
+            return "Public Surplus"
+        if "gsaauctions.gov" in domain:
+            return "GSA Auctions"
+        if "govplanet.com" in domain:
+            return "GovPlanet"
+        if "auctionzip.com" in domain:
+            return "AuctionZip"
+        if "ebay.com" in domain:
+            return "eBay"
+        return None
+
+    def _extract_location_from_text(self, text: str) -> dict[str, str | None]:
+        match = re.search(r"\b([A-Z][A-Za-z .'-]{2,40}),\s*([A-Z]{2})\s+(\d{5})?\b", text)
+        if match:
+            return {"city": match.group(1).strip(), "state": match.group(2), "text": match.group(0).strip()}
+        state_match = re.search(
+            r"\b(AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY|DC)\b",
+            text,
+        )
+        if state_match:
+            return {"city": None, "state": state_match.group(1), "text": state_match.group(1)}
+        return {"city": None, "state": None, "text": None}
 
     def _with_detail(self, raw: RawHardwareListing, detail: dict, status: str) -> RawHardwareListing:
         raw.raw_data["detail"] = detail

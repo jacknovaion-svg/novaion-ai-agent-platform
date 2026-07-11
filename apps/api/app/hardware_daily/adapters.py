@@ -440,6 +440,12 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             parsed = self._parse_govauctions_card(govauctions_url, container_text, query.category, keyword)
             if not parsed:
                 continue
+            if not parsed["canonical_source_url"]:
+                discovered_url = await self._govauctions_detail_original_url(govauctions_url)
+                if discovered_url:
+                    parsed["canonical_source_url"] = discovered_url
+                    parsed["original_source_platform"] = parsed["original_source_platform"] or self._govauctions_platform_from_url(discovered_url)
+                    parsed["source_listing_id"] = self._govauctions_source_listing_id_from_url(discovered_url) or parsed["source_listing_id"]
             title = parsed["title"]
             snippet = parsed["snippet"]
             if not self._is_category_relevant(query.category.value, title, snippet):
@@ -644,6 +650,109 @@ class WebSearchHardwareAdapter(HardwareSourceAdapter):
             return f"https://www.publicsurplus.com/sms/auction/view?auc={ids[-1]}"
         if platform == "GSA Auctions":
             return f"https://gsaauctions.gov/auctions/auctions-list?search={quote_plus(' '.join(ids))}"
+        return None
+
+    async def _govauctions_detail_original_url(self, govauctions_url: str) -> str | None:
+        try:
+            async with chromium_browser() as browser:
+                page = await browser.new_page()
+                await page.goto(govauctions_url, wait_until="domcontentloaded", timeout=12000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    pass
+                urls = await page.evaluate(
+                    """() => {
+                        const values = [];
+                        const push = value => {
+                            if (typeof value === 'string' && value.trim()) values.push(value.trim());
+                        };
+                        document.querySelectorAll('a[href]').forEach(a => push(a.href || a.getAttribute('href')));
+                        document.querySelectorAll('[data-url],[data-href],[data-link],button[onclick],a[onclick]').forEach(el => {
+                            push(el.getAttribute('data-url'));
+                            push(el.getAttribute('data-href'));
+                            push(el.getAttribute('data-link'));
+                            push(el.getAttribute('onclick'));
+                        });
+                        Array.from(document.scripts || []).forEach(script => push(script.textContent || ''));
+                        return values;
+                    }"""
+                )
+        except Exception as exc:
+            logger.info("GovAuctions.app detail original URL extraction failed url=%s error=%s", govauctions_url, str(exc)[:160])
+            return None
+        for candidate in self._extract_original_urls_from_values(urls, govauctions_url):
+            return candidate
+        return None
+
+    def _extract_original_urls_from_values(self, values: list[str], base_url: str) -> list[str]:
+        found: list[str] = []
+        for value in values:
+            if not value:
+                continue
+            for raw_url in re.findall(r"https?://[^\s'\"<>),]+", value):
+                normalized = self._normalize_auction_url(raw_url)
+                if normalized and "govauctions.app" not in urlparse(normalized).netloc.lower():
+                    found.append(normalized)
+            if value.startswith("/"):
+                absolute = urljoin(base_url, value)
+                normalized = self._normalize_auction_url(absolute)
+                if normalized and "govauctions.app" not in urlparse(normalized).netloc.lower():
+                    found.append(normalized)
+        return list(dict.fromkeys(found))
+
+    def _normalize_auction_url(self, url: str) -> str | None:
+        cleaned = url.strip().rstrip(".;")
+        domain = urlparse(cleaned).netloc.lower()
+        allowed = [
+            "publicsurplus.com",
+            "govdeals.com",
+            "gsaauctions.gov",
+            "govplanet.com",
+            "auctionzip.com",
+            "ebay.com",
+            "municibid.com",
+            "proxibid.com",
+            "bidspotter.com",
+            "allsurplus.com",
+            "hibid.com",
+        ]
+        if not any(token in domain for token in allowed):
+            return None
+        return cleaned
+
+    def _govauctions_platform_from_url(self, url: str) -> str | None:
+        domain = urlparse(url).netloc.lower()
+        if "govdeals.com" in domain:
+            return "GovDeals"
+        if "publicsurplus.com" in domain:
+            return "Public Surplus"
+        if "gsaauctions.gov" in domain:
+            return "GSA Auctions"
+        if "govplanet.com" in domain:
+            return "GovPlanet"
+        if "auctionzip.com" in domain:
+            return "AuctionZip"
+        if "ebay.com" in domain:
+            return "eBay"
+        if "municibid.com" in domain:
+            return "Municibid"
+        if "proxibid.com" in domain:
+            return "Proxibid"
+        if "bidspotter.com" in domain:
+            return "BidSpotter"
+        if "allsurplus.com" in domain:
+            return "AllSurplus"
+        if "hibid.com" in domain:
+            return "HiBid"
+        return None
+
+    def _govauctions_source_listing_id_from_url(self, url: str) -> str | None:
+        platform = self._govauctions_platform_from_url(url)
+        digits = re.findall(r"\d{2,}", url)
+        if platform and digits:
+            normalized_platform = platform.lower().replace(" ", "_")
+            return f"{normalized_platform}:{':'.join(digits[-2:])}"
         return None
 
     def _govauctions_source_listing_id(self, platform: str | None, ids: list[str], slug: str) -> str:
