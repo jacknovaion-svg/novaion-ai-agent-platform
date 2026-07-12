@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import threading
 from datetime import timedelta, timezone
 from uuid import UUID
@@ -1091,6 +1092,13 @@ class HardwareHunterDailyScheduler:
             return False
         if self._has_review_blocker(opportunity) or self._has_past_end_time(opportunity):
             return False
+        category_filter_reason = self._category_current_filter_reason(opportunity)
+        if category_filter_reason:
+            opportunity.raw_data_json = {
+                **(opportunity.raw_data_json or {}),
+                "category_filter_reason": category_filter_reason,
+            }
+            return False
         if opportunity.listing_status in {ListingStatus.ACTIVE, ListingStatus.ENDING_SOON}:
             if self._has_unconfirmed_blocked_source(opportunity):
                 return False
@@ -1108,6 +1116,13 @@ class HardwareHunterDailyScheduler:
 
     def _is_needs_review_opportunity(self, opportunity) -> bool:
         if getattr(opportunity, "requested_states", None) and opportunity.state_match_status == "unknown":
+            return True
+        category_filter_reason = self._category_current_filter_reason(opportunity)
+        if category_filter_reason:
+            opportunity.raw_data_json = {
+                **(opportunity.raw_data_json or {}),
+                "category_filter_reason": category_filter_reason,
+            }
             return True
         if opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING:
             return True
@@ -1141,6 +1156,51 @@ class HardwareHunterDailyScheduler:
             or opportunity.end_time_verification == AuctionEndVerificationLevel.CONFLICTING
             or opportunity.unavailable_reason
         )
+
+    def _category_current_filter_reason(self, opportunity) -> str | None:
+        if opportunity.category != HardwareCategory.SERVERS:
+            return None
+        return self._server_current_filter_reason(opportunity)
+
+    def _server_current_filter_reason(self, opportunity) -> str | None:
+        text = " ".join(
+            str(value or "")
+            for value in [
+                opportunity.title,
+                opportunity.raw_title,
+                opportunity.raw_description,
+                opportunity.configuration,
+                opportunity.model,
+            ]
+        ).lower()
+        if self._server_strong_signal(text):
+            return None
+        if re.search(r"\b(?:server\s+rack|rack\s+mounts?|rackmounts?|rail\s+kits?|rails?)\b", text):
+            return "rack_or_rail_only"
+        if re.search(r"\b(?:apc|ups|pdu|battery\s+backup|power\s+distribution|server\s+room\s+equipment)\b", text):
+            return "power_equipment_only"
+        if re.search(
+            r"\b(?:cpu\s+lot|processor\s+lot|ram\s+lot|memory\s+lot|hard\s+drive\s+lot|hdd\s+lot|ssd\s+lot|nvme\s+lot|server\s+parts?|parts\s+only|no\s+server\s+included)\b",
+            text,
+        ):
+            return "component_lot_only"
+        if re.search(r"\b(?:switch(?:es)?|router(?:s)?|firewall(?:s)?|patch\s+panel|cable(?:s)?|qsfp|sfp)\b", text):
+            return "networking_only"
+        return "not_server_hardware"
+
+    def _server_strong_signal(self, text: str) -> bool:
+        patterns = [
+            r"\bpoweredge\s+[rtc]\d{3,4}[a-z0-9-]*\b",
+            r"\b(?:hpe|hp)?\s*proliant\s+(?:dl|ml|bl)\d{3,4}[a-z0-9-]*\b",
+            r"\b(?:hpe\s+)?synergy\b",
+            r"\bsupermicro\s+(?:sys|superserver|x1[0-3])\b",
+            r"\b(?:sys|superserver|x1[0-3])[a-z0-9-]*\s+(?:server|clouddc)\b",
+            r"\bcisco\s+ucs\s+[cmb]\d{2,4}[a-z0-9-]*\b",
+            r"\blenovo\s+(?:thinksystem|system\s+x)\b",
+            r"\b(?:inspur|quanta|gigabyte)\s+server\b",
+            r"\b(?:rack|blade|tower|compute|gpu|ai|enterprise)\s+servers?\b",
+        ]
+        return any(re.search(pattern, text, flags=re.I) for pattern in patterns)
 
     def _confirmed_end_time(self, opportunity):
         return opportunity.end_time_utc or opportunity.auction_end_time or opportunity.calculated_end_time
